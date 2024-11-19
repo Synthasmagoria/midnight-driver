@@ -1,1 +1,1 @@
-remedybg.exe debug.rdbg
+start remedybg.exe debug.rdbg
