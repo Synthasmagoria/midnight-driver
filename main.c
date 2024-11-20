@@ -14,6 +14,28 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
+#define FRAME_TIME 1.f / 60.f
+#define FRAMERATE 60
+
+typedef struct {
+    Vector3 position;
+    float life;
+} Particle;
+
+#define MAX_PARTICLES 192
+typedef struct {
+    Texture2D texture;
+    float rate;
+    Vector3 speed;
+    u32 life;
+    Particle particles[MAX_PARTICLES];
+    float _spawnTimer;
+    u32 _number;
+    u32 _index;
+} ParticleSystem;
+void ParticleSystemStep(ParticleSystem *psys, Camera3D camera);
+void ParticleSystemDraw(ParticleSystem *psys);
+
 typedef struct {
     void** data;
     u32 size;
@@ -147,6 +169,19 @@ BoundingBox GenBoundingBoxMeshes(Mesh* meshes, int meshCount) {
         (Vector3){xbounds.y, ybounds.y, zbounds.y}};
 }
 
+Shader passthroughShader = {0};
+Shader passthroughInstShader = {0};
+
+void InitGlobals() {
+    passthroughShader = LoadShader("resources/shaders/passthrough.vs", "resources/shaders/passthrough.fs");
+    passthroughShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughShader, "mvp");
+    passthroughShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(passthroughShader, "viewPos");
+
+    passthroughInstShader = LoadShader("resources/shaders/passthroughInstancing.vs", "resources/shaders/passthrough.fs");
+    passthroughInstShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughInstShader, "mvp");
+    passthroughInstShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(passthroughInstShader, "instanceTransform");
+}
+
 int main() {
     u32 freecam = 0;
 
@@ -155,6 +190,7 @@ int main() {
     InitWindow(screenSize.x, screenSize.y, "Midnight Driver");
     SetTargetFPS(60);
     DisableCursor();
+    InitGlobals();
 
     Cab cab = {0};
     cab.model = LoadModel("resources/models/cab.m3d");
@@ -190,9 +226,6 @@ int main() {
     camera.fovy = 60.f;
     camera.up = (Vector3){0.f, 1.f, 0.f};
 
-    Model treeModel = LoadModel("resources/models/autumntree6.glb");
-    Vector3 treePosition = (Vector3){2.f, 0.f, 2.f};
-
     Vector3 lightOrigin = (Vector3){2.f, 3.f, -1.f};
     Vector3 lightPosition = (Vector3){2.f, 3.f, -1.f};
     float lightFalloffDistance = 5.f;
@@ -204,7 +237,7 @@ int main() {
         (Vector3){4.f, 0.f, 0.f},
         (Vector3){16.f, 4.f, 16.f},
         3);
-    
+
     Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
     Shader skyboxShader = LoadShader("resources/shaders/skybox.vs", "resources/shaders/skybox.fs");
     SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "environmentMap"), (i32[1]){MATERIAL_MAP_CUBEMAP}, SHADER_UNIFORM_INT);
@@ -215,15 +248,33 @@ int main() {
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
     UnloadImage(img);
 
+    Texture2D fogTexture = LoadTexture("resources/textures/fog128.png");
+    ParticleSystem fogSystem = {0};
+    fogSystem.rate = 20.f;
+    fogSystem.texture = fogTexture;
+    fogSystem.life = 2.f;
+    fogSystem.speed = (Vector3){0.f, 1.f, 0.f};
+    for (u32 i = 0; i < MAX_PARTICLES; i++) {
+        fogSystem.particles[i].position = (Vector3) {
+            (float)GetRandomValue(-400, 400) / 100.f,
+            0.f,
+            (float)GetRandomValue(-400, 400) / 100.f};
+    }
+
+    Vector3 fogPositions[10] = {0};
+    for (u32 i = 0; i < 10; i++) {
+        fogPositions[i] = Vector3Add((Vector3){4.f, 0.f, 4.f}, Vector3Scale(Vector3One(), 0.1f * i));
+    }
+
     while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        
+
         float rotationStep;
         CabUpdate(&cab, &rotationStep, &heightmap);
         Vector2 hDriverPosition = Vector2Rotate((Vector2){cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
         Vector3 driverPosition = Vector3Add(cab.position, (Vector3){hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y});
-        
+
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
             if (freecam) {
@@ -234,7 +285,7 @@ int main() {
                 debugCamera.up = (Vector3){0.f, 1.f, 0.f};
             }
         }
-        
+
         Camera *usingCamera;
         if (freecam) {
             CameraUpdateDebug(&debugCamera, 0.1f);
@@ -251,21 +302,12 @@ int main() {
             lightOrigin.z + cosf(lightMovementTimer) * 2.f};
 
         BeginMode3D(*usingCamera);
+
             rlDisableBackfaceCulling();
             rlDisableDepthMask();
                 DrawModel(skyboxModel, (Vector3){0.f}, 1.0f, WHITE);
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
-
-            //rlDisableDepthTest();
-            //rlDisableBackfaceCulling();
-            //rlDisableDepthMask();
-            //rlEnableColorBlend();
-                DrawModel(treeModel, treePosition, 1.f, WHITE);
-            //rlDisableColorBlend();
-            //rlEnableDepthMask();
-            //rlEnableBackfaceCulling();
-            //rlEnableDepthTest();
 
             DrawGrid(20, 1.f);
             DrawModel(heightmap.model, heightmap.position, 1.f, WHITE);
@@ -284,19 +326,23 @@ int main() {
                 &lightFalloffDistance,
                 SHADER_UNIFORM_FLOAT);
             DrawModel(coneModel, (Vector3){0.f}, 1.f, WHITE);
-            
-            Quaternion cabQuat = QuaternionFromEuler(0.f, cab.rotation.x * DEG2RAD, cab.rotation.y * DEG2RAD);
-            Matrix cabMatrix = QuaternionToMatrix(cabQuat);
-            cabMatrix = MatrixMultiply(cabMatrix, MatrixTranslate(cab.position.x, cab.position.y, cab.position.z));
-            
-            for (int i = 0; i < cab.model.meshCount; i++) {
-                Color prevColor = cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color;
-                cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
-                DrawMesh(cab.model.meshes[i], cab.model.materials[cab.model.meshMaterial[i]], cabMatrix);
-                cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = prevColor;
-            }
-            DrawBoundingBox(cab.bbox, RED);
-            DrawSphere(lightPosition, 0.5f, RED);
+            ParticleSystemStep(&fogSystem, *usingCamera);
+
+            //for (u32 i = 0; i < 10; i++) {
+            //    DrawBillboard(*usingCamera, fogTexture, fogPositions[i], 1.f, RED);
+            //}
+            //Quaternion cabQuat = QuaternionFromEuler(0.f, cab.rotation.x * DEG2RAD, cab.rotation.y * DEG2RAD);
+            //Matrix cabMatrix = QuaternionToMatrix(cabQuat);
+            //cabMatrix = MatrixMultiply(cabMatrix, MatrixTranslate(cab.position.x, cab.position.y, cab.position.z));
+            //
+            //for (int i = 0; i < cab.model.meshCount; i++) {
+            //    Color prevColor = cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color;
+            //    cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+            //    DrawMesh(cab.model.meshes[i], cab.model.materials[cab.model.meshMaterial[i]], cabMatrix);
+            //    cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = prevColor;
+            //}
+            //DrawBoundingBox(cab.bbox, RED);
+            //DrawSphere(lightPosition, 0.5f, RED);
         EndMode3D();
         DrawFPS(4, 4);
         if (freecam) {
@@ -306,6 +352,68 @@ int main() {
         EndDrawing();
     }
     return(0);
+}
+
+void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
+    psys->_spawnTimer += psys->rate * FRAME_TIME;
+    while (psys->_spawnTimer >= 1.f) {
+        psys->_spawnTimer -= 1.f;
+        if (psys->_number + 1 < MAX_PARTICLES) {
+            psys->_number++;
+            Particle *p = &psys->particles[(psys->_index + psys->_number) % MAX_PARTICLES];
+            p->position.y = 0.f;
+            p->life = psys->life;
+        }
+    }
+
+    Particle *parts[MAX_PARTICLES] = {NULL};
+    float dists[MAX_PARTICLES] = {-1.f};
+    Vector2 cameraPosition = (Vector2){camera.position.x, camera.position.z};
+    for (u32 i = 0; i < psys->_number; i++) {
+        Particle *p = &psys->particles[(psys->_index + i) % MAX_PARTICLES];
+
+        p->position = Vector3Add(p->position, Vector3Scale(psys->speed, FRAME_TIME));
+        p->life -= FRAME_TIME;
+
+        Vector2 ppos = (Vector2){p->position.x, p->position.z};
+        dists[i] = Vector2Distance(cameraPosition, ppos);;
+        parts[i] = p;
+    }
+
+    // TODO: Sort from camera tangent line instead of position to fix clipping
+    // TODO: Make max particles settable
+    Particle *sortedParts[MAX_PARTICLES] = {NULL};
+    float sortedDists[MAX_PARTICLES] = {1.f};
+    sortedParts[0] = parts[0];
+    sortedDists[0] = dists[0];
+    for (i32 i = 1; i < psys->_number; i++) {
+        bool biggest = true;
+        for (i32 j = 0; j < i; j++) {
+            if (dists[i] > sortedDists[j]) {
+                for (i32 k = i; k >= j; k--) {
+                    sortedDists[k+1] = sortedDists[k];
+                    sortedParts[k+1] = sortedParts[k];
+                }
+                sortedDists[j] = dists[i];
+                sortedParts[j] = parts[i];
+                biggest = false;
+                break;
+            }
+        }
+        if (biggest) {
+            sortedDists[i] = dists[i];
+            sortedParts[i] = parts[i];
+        }
+    }
+
+    for (u32 i = 0; i < psys->_number; i++) {
+        DrawBillboard(camera, psys->texture, sortedParts[i]->position, 1.f, WHITE);
+    }
+
+    while (psys->_number > 0 && psys->particles[psys->_index].life <= 0.f) {
+        psys->_index = (psys->_index + 1) % MAX_PARTICLES;
+        psys->_number--;
+    }
 }
 
 void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
@@ -329,7 +437,7 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     } else if (cab->rotation.x >= 360.f) {
         cab->rotation.x -= 360.f;
     }
-    
+
     float cabRotCos = cosf((360.f - cab->rotation.x) * DEG2RAD);
     float cabRotSin = sinf((360.f - cab->rotation.x) * DEG2RAD);
     Matrix cabRotationMatrix = {
@@ -345,7 +453,7 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     Vector3 frTire = Vector3Add(cab->position, Vector3Transform(cab->frontRightTire, cabRotationMatrix));
     Vector3 frontPoint = Vector3Lerp(flTire, frTire, 0.5f);
     frontPoint.y = HeightmapSampleHeight(*heightmap, frontPoint.x, frontPoint.z);
-    
+
     Vector3 blTire = Vector3Add(cab->position, Vector3Transform(cab->backLeftTire, cabRotationMatrix));
     Vector3 brTire = Vector3Add(cab->position, Vector3Transform(cab->backRightTire, cabRotationMatrix));
     Vector3 backPoint = Vector3Lerp(blTire, brTire, 0.5f);
@@ -432,19 +540,19 @@ Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, Ve
 
     heightmap.heightDataWidth = heightmap.heightmap.width >> resdiv;
     heightmap.heightDataHeight = heightmap.heightmap.height >> resdiv;
-    
+
     float *heightData = malloc(heightmap.heightDataWidth * heightmap.heightDataHeight * sizeof(float));
     heightmap.heightData = heightData;
     byte* data = heightmap.heightmap.data;
     u32 dataW = heightmap.heightDataWidth;
     u32 imgw = heightmap.heightmap.width;
-    
+
     for (u32 x = 0; x < heightmap.heightDataWidth; x++) {
         for (u32 y = 0; y < heightmap.heightDataHeight; y++) {
             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
             heightData[x + y * dataW] = ((float)value / 255.f) * size.y;
         }
-    }       
+    }
 
     Texture2D hmTexture = LoadTextureFromImage(heightmap.heightmap);
     heightmap.size = size;
@@ -473,7 +581,7 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
         float a = heightmap.heightData[dataX + dataY * heightmap.heightDataWidth];
         float b = nextX ? heightmap.heightData[(dataX+1) + dataY * heightmap.heightDataWidth] : 0.f;
         float c = nextY ? heightmap.heightData[dataX + (dataY + 1) * heightmap.heightDataWidth] : 0.f;
-        float d = nextX && nextY ? heightmap.heightData[(dataX + 1) + (dataY + 1) * heightmap.heightDataWidth] : 0.f; 
+        float d = nextX && nextY ? heightmap.heightData[(dataX + 1) + (dataY + 1) * heightmap.heightDataWidth] : 0.f;
         return Lerp(Lerp(a, b, dataposFract.x), Lerp(c, d, dataposFract.x), dataposFract.y);
     }
     return 0.f;

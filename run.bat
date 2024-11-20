@@ -1,1 +1,1 @@
-build/debug/main.exe
+"build/debug/main.exe"
