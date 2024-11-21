@@ -16,6 +16,16 @@ typedef int64_t i64;
 
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
+#define TAU PI * 2.f
+
+typedef struct {
+    Vector2 p1;
+    Vector2 p2;
+    Vector2 p3;
+} QuadraticBezier;
+float QuadraticBezierLerp(QuadraticBezier qb, float val) {
+    return Vector2Lerp(Vector2Lerp(qb.p1, qb.p2, val), Vector2Lerp(qb.p2, qb.p3, val), val).y;
+}
 
 typedef struct {
     Vector3 position;
@@ -27,7 +37,8 @@ typedef struct {
     Texture2D texture;
     float rate;
     Vector3 speed;
-    u32 life;
+    float life;
+    QuadraticBezier alphaCurve;
     Particle particles[MAX_PARTICLES];
     float _spawnTimer;
     u32 _number;
@@ -253,6 +264,10 @@ int main() {
     fogSystem.rate = 20.f;
     fogSystem.texture = fogTexture;
     fogSystem.life = 2.f;
+    fogSystem.alphaCurve = (QuadraticBezier){
+        (Vector2){0.f, 0.f}, 
+        (Vector2){0.5f, 2.f},
+        (Vector2){1.f, 0.f}};
     fogSystem.speed = (Vector3){0.f, 1.f, 0.f};
     for (u32 i = 0; i < MAX_PARTICLES; i++) {
         fogSystem.particles[i].position = (Vector3) {
@@ -369,6 +384,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
     Particle *parts[MAX_PARTICLES] = {NULL};
     float dists[MAX_PARTICLES] = {-1.f};
     Vector2 cameraPosition = (Vector2){camera.position.x, camera.position.z};
+    Vector2 cameraTarget = (Vector2){camera.target.x, camera.target.z};
     for (u32 i = 0; i < psys->_number; i++) {
         Particle *p = &psys->particles[(psys->_index + i) % MAX_PARTICLES];
 
@@ -376,7 +392,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
         p->life -= FRAME_TIME;
 
         Vector2 ppos = (Vector2){p->position.x, p->position.z};
-        dists[i] = Vector2Distance(cameraPosition, ppos);;
+        dists[i] = Vector2Distance(cameraPosition, ppos);
         parts[i] = p;
     }
 
@@ -407,7 +423,11 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
     }
 
     for (u32 i = 0; i < psys->_number; i++) {
-        DrawBillboard(camera, psys->texture, sortedParts[i]->position, 1.f, WHITE);
+        Particle *p = sortedParts[i];
+        float blendProgress = fclampf(1.f - p->life / psys->life, 0.f, 1.f);
+        u8 alpha = (u8)(QuadraticBezierLerp(psys->alphaCurve, blendProgress) * 255.f);
+        Color blend = (Color){255, 255, 255, alpha};
+        DrawBillboard(camera, psys->texture, p->position, 1.f, blend);
     }
 
     while (psys->_number > 0 && psys->particles[psys->_index].life <= 0.f) {
