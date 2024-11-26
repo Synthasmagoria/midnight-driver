@@ -3,9 +3,10 @@
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
-
 in mat4 instanceTransform;
-uniform mat4 mvp;
+
+uniform mat4 view;
+uniform mat4 proj;
 
 out vec3 fragPosition;
 out vec2 fragTexCoord;
@@ -15,5 +16,5 @@ out vec3 fragNormal;
 void main() {
     fragPosition = vec3(instanceTransform * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;
-    gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);
+    gl_Position = view * proj * instanceTransform * vec4(vertexPosition, 1.0);
 }

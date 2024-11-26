@@ -13,22 +13,22 @@ typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
+typedef Matrix mat4;
+typedef Vector3 v3;
+typedef Vector2 v2;
 
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
 
-typedef struct {
-    Vector2 p1;
-    Vector2 p2;
-    Vector2 p3;
-} QuadraticBezier;
+typedef struct {v2 p1; v2 p2; v2 p3;} QuadraticBezier;
+// TODO: SIMD-fy
 float QuadraticBezierLerp(QuadraticBezier qb, float val) {
     return Vector2Lerp(Vector2Lerp(qb.p1, qb.p2, val), Vector2Lerp(qb.p2, qb.p3, val), val).y;
 }
 
 typedef struct {
-    Vector3 position;
+    v3 position;
     float life;
 } Particle;
 
@@ -36,10 +36,11 @@ typedef struct {
 typedef struct {
     Texture2D texture;
     float rate;
-    Vector3 speed;
+    v3 speed;
     float life;
     QuadraticBezier alphaCurve;
     Particle particles[MAX_PARTICLES];
+    int blendMode;
     float _spawnTimer;
     u32 _number;
     u32 _index;
@@ -65,8 +66,8 @@ typedef struct {
     Model model;
     Image heightmap;
     Texture2D texture;
-    Vector3 position;
-    Vector3 size;
+    v3 position;
+    v3 size;
     u32 heightDataResolution;
     u32 heightDataWidth;
     u32 heightDataHeight;
@@ -74,16 +75,16 @@ typedef struct {
     Model debugModel;
     u32 width;
 } Heightmap;
-Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, Vector3 position, Vector3 size, u32 resdiv);
+Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3 position, v3 size, u32 resdiv);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
 typedef struct {
-    Vector3 position;
+    v3 position;
 } Terrainmap;
 
 typedef struct {
-    Vector3 offset;
+    v3 offset;
     Model model;
     float speed;
     float maxSpeed;
@@ -95,28 +96,28 @@ typedef struct {
     float turnSpeed;
     float breakDeceleration;
     float reverseAcceleration;
-    Vector3 position;
-    Vector3 rotation;
-    Vector3 frontLeftTire;
-    Vector3 frontRightTire;
-    Vector3 backLeftTire;
-    Vector3 backRightTire;
+    v3 position;
+    v3 rotation;
+    v3 frontLeftTire;
+    v3 frontRightTire;
+    v3 backLeftTire;
+    v3 backRightTire;
     float tireHorizontalSeparation;
-    Vector3 driversSeat;
+    v3 driversSeat;
     BoundingBox bbox;
 } Cab;
 void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap *heightmap);
 
 void CameraUpdateDebug(Camera *camera, float speed);
-void CameraUpdate(Camera *camera, Vector3 position, Vector2 rotationAdd);
-Vector3 GetCameraForwardNorm(Camera *camera);
-Vector3 GetCameraUpNorm(Camera *camera);
-Vector3 GetCameraRightNorm(Camera *camera);
+void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd);
+v3 GetCameraForwardNorm(Camera *camera);
+v3 GetCameraUpNorm(Camera *camera);
+v3 GetCameraRightNorm(Camera *camera);
 
-int PointInRectangle(Vector2 begin, Vector2 end, Vector2 pt) {
+int PointInRectangle(v2 begin, v2 end, v2 pt) {
     return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;
 }
-const char* TextFormatVector3(Vector3 v) {
+const char* TextFormatVector3(v3 v) {
     return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);
 }
 void DrawTextShadow(const char* text, int x, int y, int fontSize, Color col, Color shadowCol) {
@@ -130,11 +131,14 @@ void DrawCrosshair(int x, int y, Color col) {
 float ffractf(float val) {
     return val - floorf(val);
 }
-Vector2 Vector2Fract(Vector2 v) {
-    return (Vector2){ffractf(v.x), ffractf(v.y)};
+v2 Vector2Fract(v2 v) {
+    return (v2){ffractf(v.x), ffractf(v.y)};
 }
 float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
+}
+float GetRandomValueF(float min, float max) {
+    return ((float)GetRandomValue((i32)(min * 100.f), (i32)(max * 100.f))) / 100.f;
 }
 u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
@@ -147,7 +151,7 @@ u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
     return hval;
 }
 BoundingBox GenBoundingBoxMesh(Mesh mesh) {
-    Vector2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
+    v2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
     for (int i = 0; i < mesh.vertexCount; i+=3) {
         float* cv = mesh.vertices + i;
         xbounds.x = fminf(*cv, xbounds.x);
@@ -158,11 +162,11 @@ BoundingBox GenBoundingBoxMesh(Mesh mesh) {
         zbounds.y = fmaxf(*(cv+2), zbounds.y);
     }
     return (BoundingBox){
-        (Vector3){xbounds.x, ybounds.x, zbounds.x},
-        (Vector3){xbounds.y, ybounds.y, zbounds.y}};
+        (v3){xbounds.x, ybounds.x, zbounds.x},
+        (v3){xbounds.y, ybounds.y, zbounds.y}};
 }
 BoundingBox GenBoundingBoxMeshes(Mesh* meshes, int meshCount) {
-    Vector2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
+    v2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
     for (int i = 0; i < meshCount; i++) {
         Mesh *mesh = meshes + i;
         for (int j = 0; j < mesh->vertexCount; j+=3) {
@@ -176,35 +180,56 @@ BoundingBox GenBoundingBoxMeshes(Mesh* meshes, int meshCount) {
         }
     }
     return (BoundingBox){
-        (Vector3){xbounds.x, ybounds.x, zbounds.x},
-        (Vector3){xbounds.y, ybounds.y, zbounds.y}};
+        (v3){xbounds.x, ybounds.x, zbounds.x},
+        (v3){xbounds.y, ybounds.y, zbounds.y}};
 }
+
+#define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
+#define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s.vs", v), TextFormat("resources/shaders/%s.fs", f)))
+#define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
+#define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
 
 Shader passthroughShader = {0};
 Shader passthroughInstShader = {0};
 
 void InitGlobals() {
-    passthroughShader = LoadShader("resources/shaders/passthrough.vs", "resources/shaders/passthrough.fs");
+    passthroughShader = LOAD_SHADER("passthrough", "passthrough");
     passthroughShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughShader, "mvp");
     passthroughShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(passthroughShader, "viewPos");
-
-    passthroughInstShader = LoadShader("resources/shaders/passthroughInstancing.vs", "resources/shaders/passthrough.fs");
-    passthroughInstShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughInstShader, "mvp");
-    passthroughInstShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(passthroughInstShader, "instanceTransform");
 }
+
 
 int main() {
     u32 freecam = 0;
 
-    Vector2 screenSize = {1440, 800};
+    v2 screenSize = {1440, 800};
     SetTraceLogLevel(4);
     InitWindow(screenSize.x, screenSize.y, "Midnight Driver");
     SetTargetFPS(60);
     DisableCursor();
     InitGlobals();
 
+    Model treeModel = LOAD_MODEL("tree.glb");
+    u32 treeCount = 10;
+    mat4 *treeTransforms = RL_CALLOC(treeCount, sizeof(mat4));
+    for (u32 i = 0; i < treeCount; i++) {
+        treeTransforms[i] = MatrixTranslate(
+            (float)GetRandomValue(-5000, 5000) / 100.f,
+            0.f,
+            (float)GetRandomValue(-5000, 5000) / 100.f);
+    }
+    Material treeMaterial = LoadMaterialDefault();
+    Shader treeShader = LOAD_SHADER("passthroughInstancing", "passthrough");
+    int viewLoc = GetShaderLocation(treeShader, "view");
+    treeShader.locs[SHADER_LOC_MATRIX_VIEW] = viewLoc;
+    int projLoc = GetShaderLocation(treeShader, "proj");
+    treeShader.locs[SHADER_LOC_MATRIX_PROJECTION] = projLoc;
+    treeShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(treeMaterial.shader, "instanceTransform");
+    treeMaterial.shader = treeShader;
+    treeModel.materials[0] = treeMaterial;
+
     Cab cab = {0};
-    cab.model = LoadModel("resources/models/cab.m3d");
+    cab.model = LOAD_MODEL("cab.m3d");
     cab.speed = 0.f;
     cab.maxSpeed = 1.f;
     cab.maxReverseSpeed = 0.3f;
@@ -212,83 +237,89 @@ int main() {
     cab.breakDeceleration = 0.02f;
     cab.reverseAcceleration = 0.0065f;
     cab.friction = 0.005f;
-    cab.driversSeat = (Vector3){-0.1f, 0.7f, -0.25f};
-    cab.offset = (Vector3){0.25f, 0.f, -0.06f};
-    cab.frontLeftTire = (Vector3){0.8f, 0.f, -0.45f};
-    cab.frontRightTire = (Vector3){0.8f, 0.f, 0.45f};
-    cab.backLeftTire = (Vector3){-1.f, 0.f, -0.45f};
-    cab.backRightTire = (Vector3){-1.f, 0.f, 0.45f};
+    cab.driversSeat = (v3){-0.1f, 0.7f, -0.25f};
+    cab.offset = (v3){0.25f, 0.f, -0.06f};
+    cab.frontLeftTire = (v3){0.8f, 0.f, -0.45f};
+    cab.frontRightTire = (v3){0.8f, 0.f, 0.45f};
+    cab.backLeftTire = (v3){-1.f, 0.f, -0.45f};
+    cab.backRightTire = (v3){-1.f, 0.f, 0.45f};
     cab.turnRadius = 30.f;
     cab.turnSpeed = 1.f;
     cab.bbox = GenBoundingBoxMeshes(cab.model.meshes, cab.model.meshCount);
 
     Model coneModel = LoadModelFromMesh(GenMeshCube(2.f, 2.f, 2.f));
-    coneModel.materials[0].shader = LoadShader("resources/shaders/light.vs", "resources/shaders/light.fs");
-    coneModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = LoadTexture("resources/textures/box.png");
+    coneModel.materials[0].shader = LOAD_SHADER("light", "light");
+    coneModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = LOAD_TEXTURE("box.png");
     coneModel.transform = MatrixTranslate(0.f, 3.f, 0.f);
 
     Camera camera = {0};
     camera.fovy = 60.f;
-    camera.target = (Vector3){1.f, 0.f, 0.f};
+    camera.target = (v3){1.f, 0.f, 0.f};
     camera.projection = CAMERA_PERSPECTIVE;
-    camera.up = (Vector3){0.f, 1.f, 0.f};
+    camera.up = (v3){0.f, 1.f, 0.f};
 
     Camera debugCamera = {0};
     camera.fovy = 60.f;
-    camera.up = (Vector3){0.f, 1.f, 0.f};
+    camera.up = (v3){0.f, 1.f, 0.f};
 
-    Vector3 lightOrigin = (Vector3){2.f, 3.f, -1.f};
-    Vector3 lightPosition = (Vector3){2.f, 3.f, -1.f};
+    float cameraSpeed = 0.1f;
+
+    v3 lightOrigin = (v3){2.f, 3.f, -1.f};
+    v3 lightPosition = (v3){2.f, 3.f, -1.f};
     float lightFalloffDistance = 5.f;
     float lightMovementTimer = 0.f;
 
     Heightmap heightmap = HeightmapCreate(
         "resources/textures/heightmap.png",
         "resources/textures/heightmap_texture.png",
-        (Vector3){4.f, 0.f, 0.f},
-        (Vector3){16.f, 4.f, 16.f},
+        (v3){4.f, 0.f, 0.f},
+        (v3){16.f, 4.f, 16.f},
         3);
 
     Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    Shader skyboxShader = LoadShader("resources/shaders/skybox.vs", "resources/shaders/skybox.fs");
+    Shader skyboxShader = LOAD_SHADER("skybox", "skybox");
     SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "environmentMap"), (i32[1]){MATERIAL_MAP_CUBEMAP}, SHADER_UNIFORM_INT);
     SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "doGamma"), (int[1]){0}, SHADER_UNIFORM_INT);
     SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "vflipped"), (int[1]){0}, SHADER_UNIFORM_INT);
     skyboxModel.materials[0].shader = skyboxShader;
-    Image img = LoadImage("resources/textures/skybox.png");
+    Image img = LOAD_IMAGE("skybox.png");
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
     UnloadImage(img);
 
-    Texture2D fogTexture = LoadTexture("resources/textures/fog128.png");
+    Texture2D fogTexture = LOAD_TEXTURE("fog128.png");
     ParticleSystem fogSystem = {0};
     fogSystem.rate = 20.f;
     fogSystem.texture = fogTexture;
     fogSystem.life = 2.f;
     fogSystem.alphaCurve = (QuadraticBezier){
-        (Vector2){0.f, 0.f}, 
-        (Vector2){0.5f, 2.f},
-        (Vector2){1.f, 0.f}};
-    fogSystem.speed = (Vector3){0.f, 1.f, 0.f};
+        (v2){0.f, 0.f}, 
+        (v2){0.5f, 2.f},
+        (v2){1.f, 0.f}};
+    fogSystem.blendMode = RL_BLEND_ADDITIVE;
+    fogSystem.speed = (v3){0.f, 1.f, 0.f};
     for (u32 i = 0; i < MAX_PARTICLES; i++) {
-        fogSystem.particles[i].position = (Vector3) {
+        fogSystem.particles[i].position = (v3) {
             (float)GetRandomValue(-400, 400) / 100.f,
             0.f,
             (float)GetRandomValue(-400, 400) / 100.f};
     }
 
-    Vector3 fogPositions[10] = {0};
+    v3 fogPositions[10] = {0};
     for (u32 i = 0; i < 10; i++) {
-        fogPositions[i] = Vector3Add((Vector3){4.f, 0.f, 4.f}, Vector3Scale(Vector3One(), 0.1f * i));
+        fogPositions[i] = Vector3Add((v3){4.f, 0.f, 4.f}, Vector3Scale(Vector3One(), 0.1f * i));
     }
 
     while (!WindowShouldClose()) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
+        v2 mouseScroll = GetMouseWheelMoveV();
+        cameraSpeed = fclampf(cameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
+
         float rotationStep;
         CabUpdate(&cab, &rotationStep, &heightmap);
-        Vector2 hDriverPosition = Vector2Rotate((Vector2){cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
-        Vector3 driverPosition = Vector3Add(cab.position, (Vector3){hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y});
+        v2 hDriverPosition = Vector2Rotate((v2){cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
+        v3 driverPosition = Vector3Add(cab.position, (v3){hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y});
 
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
@@ -297,30 +328,29 @@ int main() {
                 debugCamera.target = camera.target;
                 debugCamera.projection = camera.projection;
                 debugCamera.fovy = camera.fovy;
-                debugCamera.up = (Vector3){0.f, 1.f, 0.f};
+                debugCamera.up = (v3){0.f, 1.f, 0.f};
             }
         }
 
         Camera *usingCamera;
         if (freecam) {
-            CameraUpdateDebug(&debugCamera, 0.1f);
+            CameraUpdateDebug(&debugCamera, cameraSpeed);
             usingCamera = &debugCamera;
         } else {
-            CameraUpdate(&camera, driverPosition, (Vector2){-rotationStep * DEG2RAD, 0.f});
+            CameraUpdate(&camera, driverPosition, (v2){-rotationStep * DEG2RAD, 0.f});
             usingCamera = &camera;
         }
 
         lightMovementTimer += 0.016f * 2.f;
-        lightPosition = (Vector3){
+        lightPosition = (v3){
             lightOrigin.x + sinf(lightMovementTimer) * 2.f,
             lightOrigin.y,
             lightOrigin.z + cosf(lightMovementTimer) * 2.f};
 
         BeginMode3D(*usingCamera);
-
             rlDisableBackfaceCulling();
             rlDisableDepthMask();
-                DrawModel(skyboxModel, (Vector3){0.f}, 1.0f, WHITE);
+                DrawModel(skyboxModel, (v3){0.f}, 1.0f, WHITE);
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
 
@@ -340,14 +370,22 @@ int main() {
                 GetShaderLocation(coneModel.materials[0].shader, "lightFalloff"),
                 &lightFalloffDistance,
                 SHADER_UNIFORM_FLOAT);
-            DrawModel(coneModel, (Vector3){0.f}, 1.f, WHITE);
+            DrawModel(coneModel, (v3){0.f}, 1.f, WHITE);
+            
+            //DrawMesh(treeModel.meshes[0], treeMaterial, treeTransforms[0]);
+            SetShaderValueMatrix(treeShader, viewLoc, rlGetMatrixModelview());
+            SetShaderValueMatrix(treeShader, projLoc, rlGetMatrixProjection());
+            treeMaterial.shader = treeShader;
+            DrawMeshInstanced(treeModel.meshes[0], treeMaterial, treeTransforms, treeCount);
+            
             ParticleSystemStep(&fogSystem, *usingCamera);
+
 
             //for (u32 i = 0; i < 10; i++) {
             //    DrawBillboard(*usingCamera, fogTexture, fogPositions[i], 1.f, RED);
             //}
             //Quaternion cabQuat = QuaternionFromEuler(0.f, cab.rotation.x * DEG2RAD, cab.rotation.y * DEG2RAD);
-            //Matrix cabMatrix = QuaternionToMatrix(cabQuat);
+            //mat4 cabMatrix = QuaternionToMatrix(cabQuat);
             //cabMatrix = MatrixMultiply(cabMatrix, MatrixTranslate(cab.position.x, cab.position.y, cab.position.z));
             //
             //for (int i = 0; i < cab.model.meshCount; i++) {
@@ -383,15 +421,15 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
 
     Particle *parts[MAX_PARTICLES] = {NULL};
     float dists[MAX_PARTICLES] = {-1.f};
-    Vector2 cameraPosition = (Vector2){camera.position.x, camera.position.z};
-    Vector2 cameraTarget = (Vector2){camera.target.x, camera.target.z};
+    v2 cameraPosition = (v2){camera.position.x, camera.position.z};
+    v2 cameraTarget = (v2){camera.target.x, camera.target.z};
     for (u32 i = 0; i < psys->_number; i++) {
         Particle *p = &psys->particles[(psys->_index + i) % MAX_PARTICLES];
 
         p->position = Vector3Add(p->position, Vector3Scale(psys->speed, FRAME_TIME));
         p->life -= FRAME_TIME;
 
-        Vector2 ppos = (Vector2){p->position.x, p->position.z};
+        v2 ppos = (v2){p->position.x, p->position.z};
         dists[i] = Vector2Distance(cameraPosition, ppos);
         parts[i] = p;
     }
@@ -422,6 +460,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
         }
     }
 
+    rlSetBlendMode(psys->blendMode);
     for (u32 i = 0; i < psys->_number; i++) {
         Particle *p = sortedParts[i];
         float blendProgress = fclampf(1.f - p->life / psys->life, 0.f, 1.f);
@@ -429,6 +468,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
         Color blend = (Color){255, 255, 255, alpha};
         DrawBillboard(camera, psys->texture, p->position, 1.f, blend);
     }
+    rlSetBlendMode(BLEND_ALPHA);
 
     while (psys->_number > 0 && psys->particles[psys->_index].life <= 0.f) {
         psys->_index = (psys->_index + 1) % MAX_PARTICLES;
@@ -460,32 +500,32 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
 
     float cabRotCos = cosf((360.f - cab->rotation.x) * DEG2RAD);
     float cabRotSin = sinf((360.f - cab->rotation.x) * DEG2RAD);
-    Matrix cabRotationMatrix = {
+    mat4 cabRotationMatrix = {
         cabRotCos, 0.f, -cabRotSin, 0.f,
         0.f, 1.f,  0.f, 0.f,
         cabRotSin, 0.f, cabRotCos, 0.f,
         0.f, 0.f, 0.f, 1.f};
-    Vector3 cabDirection = Vector3Transform((Vector3){1.f, 0.f, 0.f}, cabRotationMatrix);
-    Vector3 cabMoveStep = Vector3Scale(cabDirection, cab->speed);
+    v3 cabDirection = Vector3Transform((v3){1.f, 0.f, 0.f}, cabRotationMatrix);
+    v3 cabMoveStep = Vector3Scale(cabDirection, cab->speed);
     cab->position = Vector3Add(cab->position, cabMoveStep);
 
-    Vector3 flTire = Vector3Add(cab->position, Vector3Transform(cab->frontLeftTire, cabRotationMatrix));
-    Vector3 frTire = Vector3Add(cab->position, Vector3Transform(cab->frontRightTire, cabRotationMatrix));
-    Vector3 frontPoint = Vector3Lerp(flTire, frTire, 0.5f);
+    v3 flTire = Vector3Add(cab->position, Vector3Transform(cab->frontLeftTire, cabRotationMatrix));
+    v3 frTire = Vector3Add(cab->position, Vector3Transform(cab->frontRightTire, cabRotationMatrix));
+    v3 frontPoint = Vector3Lerp(flTire, frTire, 0.5f);
     frontPoint.y = HeightmapSampleHeight(*heightmap, frontPoint.x, frontPoint.z);
 
-    Vector3 blTire = Vector3Add(cab->position, Vector3Transform(cab->backLeftTire, cabRotationMatrix));
-    Vector3 brTire = Vector3Add(cab->position, Vector3Transform(cab->backRightTire, cabRotationMatrix));
-    Vector3 backPoint = Vector3Lerp(blTire, brTire, 0.5f);
+    v3 blTire = Vector3Add(cab->position, Vector3Transform(cab->backLeftTire, cabRotationMatrix));
+    v3 brTire = Vector3Add(cab->position, Vector3Transform(cab->backRightTire, cabRotationMatrix));
+    v3 backPoint = Vector3Lerp(blTire, brTire, 0.5f);
     backPoint.y = HeightmapSampleHeight(*heightmap, backPoint.x, backPoint.z);
 
     cab->position.y = Lerp(frontPoint.y, backPoint.y, 0.5f);
     if (backPoint.y != 0.f || frontPoint.y != 0.f) {
         float tireHorSep = cab->frontLeftTire.x - cab->backLeftTire.x;
         // Can probably be changed to just using a value
-        Vector2 pitchNormal = (Vector2Normalize(Vector2Subtract(
-                (Vector2){cab->frontLeftTire.x, frontPoint.y},
-                (Vector2){cab->backLeftTire.x, backPoint.y})));
+        v2 pitchNormal = (Vector2Normalize(Vector2Subtract(
+                (v2){cab->frontLeftTire.x, frontPoint.y},
+                (v2){cab->backLeftTire.x, backPoint.y})));
         cab->rotation.y = atan2(pitchNormal.y, pitchNormal.x) * RAD2DEG;
     } else {
         cab->rotation.y = 0.f;
@@ -494,47 +534,47 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
 }
 
 void CameraUpdateDebug(Camera *camera, float speed) {
-    Vector3 targetDirection = Vector3Subtract(camera->target, camera->position);
+    v3 targetDirection = Vector3Subtract(camera->target, camera->position);
     float sensitivity = 0.002f;
-    Vector2 mouseDelta = GetMouseDelta();
+    v2 mouseDelta = GetMouseDelta();
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraUpNorm(camera), -mouseDelta.x * sensitivity);
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraRightNorm(camera), -mouseDelta.y * sensitivity);
-    Vector3 input = {
+    v3 input = {
         (float)IsKeyDown(KEY_W) - (float)IsKeyDown(KEY_S),
         (float)IsKeyDown(KEY_Q) - (float)IsKeyDown(KEY_E),
         (float)IsKeyDown(KEY_D) - (float)IsKeyDown(KEY_A)};
-    Vector2 hInput = (Vector2){input.x, input.z};
+    v2 hInput = (v2){input.x, input.z};
     if (Vector2LengthSqr(hInput) > 0.f) {
-        Vector2 hInputNorm = Vector2Normalize(hInput);
-        Vector2 hDirection = Vector2Rotate((Vector2){targetDirection.x, targetDirection.z}, atan2f(hInputNorm.y, hInputNorm.x));
+        v2 hInputNorm = Vector2Normalize(hInput);
+        v2 hDirection = Vector2Rotate((v2){targetDirection.x, targetDirection.z}, atan2f(hInputNorm.y, hInputNorm.x));
         camera->position.x += hDirection.x * speed;
         camera->position.z += hDirection.y * speed;
     }
     camera->position.y += input.y * speed;
     camera->target = Vector3Add(camera->position, targetDirection);
 }
-void CameraUpdate(Camera *camera, Vector3 position, Vector2 rotationAdd) {
-    Vector3 targetDirection = Vector3Subtract(camera->target, camera->position);
+void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd) {
+    v3 targetDirection = Vector3Subtract(camera->target, camera->position);
     float sensitivity = 0.002f;
-    Vector2 rotationDelta = Vector2Add(Vector2Scale(GetMouseDelta(), sensitivity), rotationAdd);
+    v2 rotationDelta = Vector2Add(Vector2Scale(GetMouseDelta(), sensitivity), rotationAdd);
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraUpNorm(camera), -rotationDelta.x);
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraRightNorm(camera), -rotationDelta.y);
     camera->position = position;
     camera->target = Vector3Add(camera->position, targetDirection);
 }
-Vector3 GetCameraForwardNorm(Camera *camera) {
+v3 GetCameraForwardNorm(Camera *camera) {
     return Vector3Normalize(Vector3Subtract(camera->target, camera->position));
 }
-Vector3 GetCameraUpNorm(Camera *camera) {
+v3 GetCameraUpNorm(Camera *camera) {
     return Vector3Normalize(camera->up);
 }
-Vector3 GetCameraRightNorm(Camera *camera) {
-    Vector3 forward = GetCameraForwardNorm(camera);
-    Vector3 up = GetCameraUpNorm(camera);
+v3 GetCameraRightNorm(Camera *camera) {
+    v3 forward = GetCameraForwardNorm(camera);
+    v3 up = GetCameraUpNorm(camera);
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
 
-Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, Vector3 position, Vector3 size, u32 resdiv) {
+Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3 position, v3 size, u32 resdiv) {
     Heightmap heightmap = {0};
     heightmap.heightmap = LoadImage(heightmapPath);
     u32 stride = 0;
@@ -586,13 +626,13 @@ Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, Ve
     return heightmap;
 }
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
-    Vector2 rectBegin = (Vector2){heightmap.position.x, heightmap.position.z};
-    Vector2 rectEnd = Vector2Add(rectBegin, (Vector2){heightmap.size.x, heightmap.size.z});
-    if (PointInRectangle(rectBegin, rectEnd, (Vector2){x, z})) {
-        Vector2 abspos = Vector2Subtract((Vector2){x, z}, rectBegin);
-        Vector2 normpos = Vector2Divide(abspos, (Vector2){heightmap.size.x, heightmap.size.z});
-        Vector2 datapos = Vector2Multiply(normpos, (Vector2){heightmap.heightDataWidth, heightmap.heightDataHeight});
-        Vector2 dataposFract = Vector2Fract(datapos);
+    v2 rectBegin = (v2){heightmap.position.x, heightmap.position.z};
+    v2 rectEnd = Vector2Add(rectBegin, (v2){heightmap.size.x, heightmap.size.z});
+    if (PointInRectangle(rectBegin, rectEnd, (v2){x, z})) {
+        v2 abspos = Vector2Subtract((v2){x, z}, rectBegin);
+        v2 normpos = Vector2Divide(abspos, (v2){heightmap.size.x, heightmap.size.z});
+        v2 datapos = Vector2Multiply(normpos, (v2){heightmap.heightDataWidth, heightmap.heightDataHeight});
+        v2 dataposFract = Vector2Fract(datapos);
         u32 dataX = datapos.x;
         u32 dataY = datapos.y;
         bool nextX = dataX + 1 < heightmap.heightDataWidth;
