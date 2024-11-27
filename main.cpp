@@ -15,13 +15,21 @@ typedef int32_t i32;
 typedef int64_t i64;
 typedef Matrix mat4;
 typedef Vector3 v3;
-inline v3 V3(float x, float y, float z) {v3 v; v.x = x; v.y = y; v.z = z; return v;}
 typedef Vector2 v2;
-inline v2 V2(float x, float y) {v2 v; v.x = x; v.y = y; return v;}
 
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
+
+typedef struct {
+    Matrix *transforms;
+    u32 instanceCount;
+    Model _model;
+    Mesh mesh;
+    Material material;
+} InstanceMeshRenderData;
+void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
+InstanceMeshRenderData ForestCreate(Image image, float density, v2 worldSize, v2 worldPos, float treeChance, float randTreeOffset);
 
 typedef struct {v2 p1; v2 p2; v2 p3;} QuadraticBezier;
 // TODO: SIMD-fy
@@ -139,8 +147,12 @@ v2 Vector2Fract(v2 v) {
 float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
 }
+// NOTE: only supports up to 2 decimals
 float GetRandomValueF(float min, float max) {
     return ((float)GetRandomValue((i32)(min * 100.f), (i32)(max * 100.f))) / 100.f;
+}
+bool GetRandomChanceF(float percentage) {
+    return GetRandomValueF(0.f, 100.f) < percentage;
 }
 u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
@@ -181,9 +193,43 @@ BoundingBox GenBoundingBoxMeshes(Mesh* meshes, int meshCount) {
     }
     return {{xbounds.x, ybounds.x, zbounds.x}, {xbounds.y, ybounds.y, zbounds.y}};
 }
+i32 PixelformatGetStride(i32 format) {
+    switch (format) {
+        case PIXELFORMAT_UNCOMPRESSED_R5G6B5:
+        case PIXELFORMAT_UNCOMPRESSED_R5G5B5A1:
+        case PIXELFORMAT_UNCOMPRESSED_R4G4B4A4:
+        case PIXELFORMAT_UNCOMPRESSED_R32:
+        case PIXELFORMAT_UNCOMPRESSED_R32G32B32:
+        case PIXELFORMAT_UNCOMPRESSED_R32G32B32A32:
+        case PIXELFORMAT_UNCOMPRESSED_R16:
+        case PIXELFORMAT_UNCOMPRESSED_R16G16B16:
+        case PIXELFORMAT_UNCOMPRESSED_R16G16B16A16:
+        case PIXELFORMAT_COMPRESSED_DXT1_RGB:
+        case PIXELFORMAT_COMPRESSED_DXT1_RGBA:
+        case PIXELFORMAT_COMPRESSED_DXT3_RGBA:
+        case PIXELFORMAT_COMPRESSED_DXT5_RGBA:
+        case PIXELFORMAT_COMPRESSED_ETC1_RGB:
+        case PIXELFORMAT_COMPRESSED_ETC2_RGB:
+        case PIXELFORMAT_COMPRESSED_ETC2_EAC_RGBA:
+        case PIXELFORMAT_COMPRESSED_PVRT_RGB:
+        case PIXELFORMAT_COMPRESSED_PVRT_RGBA:
+        case PIXELFORMAT_COMPRESSED_ASTC_4x4_RGBA:
+        case PIXELFORMAT_COMPRESSED_ASTC_8x8_RGBA:
+            return -1;
+        case PIXELFORMAT_UNCOMPRESSED_GRAYSCALE:
+            return 1;
+        case PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA:
+            return 2;
+        case PIXELFORMAT_UNCOMPRESSED_R8G8B8:
+            return 3;
+        case PIXELFORMAT_UNCOMPRESSED_R8G8B8A8:
+            return 4;
+    }
+    return -1;
+}
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
-#define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s.vs", v), TextFormat("resources/shaders/%s.fs", f)))
+#define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
 
@@ -191,7 +237,7 @@ Shader passthroughShader = {};
 Shader passthroughInstShader = {};
 
 void InitGlobals() {
-    passthroughShader = LOAD_SHADER("passthrough", "passthrough");
+    passthroughShader = LOAD_SHADER("passthrough.vs", "passthrough.fs");
     passthroughShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughShader, "mvp");
     passthroughShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(passthroughShader, "viewPos");
 }
@@ -206,25 +252,6 @@ int main() {
     SetTargetFPS(60);
     DisableCursor();
     InitGlobals();
-
-    Model treeModel = LOAD_MODEL("tree.glb");
-    u32 treeCount = 10;
-    mat4 *treeTransforms = (mat4*)RL_CALLOC(treeCount, sizeof(mat4));
-    for (u32 i = 0; i < treeCount; i++) {
-        treeTransforms[i] = MatrixTranslate(
-            (float)GetRandomValue(-5000, 5000) / 100.f,
-            0.f,
-            (float)GetRandomValue(-5000, 5000) / 100.f);
-    }
-    Material treeMaterial = LoadMaterialDefault();
-    Shader treeShader = LOAD_SHADER("passthroughInstancing", "passthrough");
-    int viewLoc = GetShaderLocation(treeShader, "view");
-    treeShader.locs[SHADER_LOC_MATRIX_VIEW] = viewLoc;
-    int projLoc = GetShaderLocation(treeShader, "proj");
-    treeShader.locs[SHADER_LOC_MATRIX_PROJECTION] = projLoc;
-    treeShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(treeMaterial.shader, "instanceTransform");
-    treeMaterial.shader = treeShader;
-    treeModel.materials[0] = treeMaterial;
 
     Cab cab = {};
     cab.model = LOAD_MODEL("cab.m3d");
@@ -245,11 +272,6 @@ int main() {
     cab.turnSpeed = 1.f;
     cab.bbox = GenBoundingBoxMeshes(cab.model.meshes, cab.model.meshCount);
 
-    Model coneModel = LoadModelFromMesh(GenMeshCube(2.f, 2.f, 2.f));
-    coneModel.materials[0].shader = LOAD_SHADER("light", "light");
-    coneModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = LOAD_TEXTURE("box.png");
-    coneModel.transform = MatrixTranslate(0.f, 3.f, 0.f);
-
     Camera camera = {};
     camera.fovy = 60.f;
     camera.target = {1.f, 0.f, 0.f};
@@ -259,23 +281,10 @@ int main() {
     Camera debugCamera = {};
     camera.fovy = 60.f;
     camera.up = {0.f, 1.f, 0.f};
-
     float cameraSpeed = 0.1f;
 
-    v3 lightOrigin = {2.f, 3.f, -1.f};
-    v3 lightPosition = {2.f, 3.f, -1.f};
-    float lightFalloffDistance = 5.f;
-    float lightMovementTimer = 0.f;
-
-    Heightmap heightmap = HeightmapCreate(
-        "resources/textures/heightmap.png",
-        "resources/textures/heightmap_texture.png",
-        {4.f, 0.f, 0.f},
-        {16.f, 4.f, 16.f},
-        3);
-
     Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    Shader skyboxShader = LOAD_SHADER("skybox", "skybox");
+    Shader skyboxShader = LOAD_SHADER("skybox.vs", "skybox.fs");
     {
         i32 envmapValue = MATERIAL_MAP_CUBEMAP;
         SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
@@ -289,25 +298,16 @@ int main() {
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
     UnloadImage(img);
 
-    Texture2D fogTexture = LOAD_TEXTURE("fog128.png");
-    ParticleSystem fogSystem = {};
-    fogSystem.rate = 20.f;
-    fogSystem.texture = fogTexture;
-    fogSystem.life = 2.f;
-    fogSystem.alphaCurve = {{0.f, 0.f},  {0.5f, 2.f}, {1.f, 0.f}};
-    fogSystem.blendMode = RL_BLEND_ADDITIVE;
-    fogSystem.speed = {0.f, 1.f, 0.f};
-    for (u32 i = 0; i < MAX_PARTICLES; i++) {
-        fogSystem.particles[i].position =  {
-            (float)GetRandomValue(-400, 400) / 100.f,
-            0.f,
-            (float)GetRandomValue(-400, 400) / 100.f};
-    }
-
-    v3 fogPositions[10] = {};
-    for (u32 i = 0; i < 10; i++) {
-        fogPositions[i] = V3(4.f, 0.f, 4.f) + Vector3One() * 0.1f * (float)i;
-    }
+    Image terrainImage = LOAD_IMAGE("terrainmap.png");
+    v2 forestSize = {50.f, 50.f};
+    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, 0.6f, forestSize, forestSize / -2.f, 90.f, 0.25f);
+    UnloadImage(terrainImage);
+    /*
+        TODO: Add a random color tint to the trees
+        TODO: Add a random texture to the trees
+        TODO: Add 3 different tree models
+        TODO: Add basic flora
+    */
 
     while (!WindowShouldClose()) {
         BeginDrawing();
@@ -317,9 +317,9 @@ int main() {
         cameraSpeed = fclampf(cameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
 
         float rotationStep;
-        CabUpdate(&cab, &rotationStep, &heightmap);
+        CabUpdate(&cab, &rotationStep, NULL);
         v2 hDriverPosition = Vector2Rotate({cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
-        v3 driverPosition = V3(hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y) + cab.position;
+        v3 driverPosition = v3{hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y} + cab.position;
 
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
@@ -341,62 +341,14 @@ int main() {
             usingCamera = &camera;
         }
 
-        lightMovementTimer += 0.016f * 2.f;
-        lightPosition = {
-            lightOrigin.x + sinf(lightMovementTimer) * 2.f,
-            lightOrigin.y,
-            lightOrigin.z + cosf(lightMovementTimer) * 2.f};
-
         BeginMode3D(*usingCamera);
             rlDisableBackfaceCulling();
             rlDisableDepthMask();
                 DrawModel(skyboxModel, {0.f}, 1.0f, WHITE);
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
-
+            DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawGrid(20, 1.f);
-            DrawModel(heightmap.model, heightmap.position, 1.f, WHITE);
-            SetShaderValueMatrix(
-                coneModel.materials[0].shader,
-                GetShaderLocation(coneModel.materials[0].shader, "model_mat"),
-                coneModel.transform);
-            float lightPositionUniformValue[] = {lightPosition.x, lightPosition.y, lightPosition.z};
-            SetShaderValue(
-                coneModel.materials[0].shader,
-                GetShaderLocation(coneModel.materials[0].shader, "lightPosition"),
-                lightPositionUniformValue,
-                SHADER_UNIFORM_VEC3);
-            SetShaderValue(
-                coneModel.materials[0].shader,
-                GetShaderLocation(coneModel.materials[0].shader, "lightFalloff"),
-                &lightFalloffDistance,
-                SHADER_UNIFORM_FLOAT);
-            DrawModel(coneModel, {0.f}, 1.f, WHITE);
-            
-            //DrawMesh(treeModel.meshes[0], treeMaterial, treeTransforms[0]);
-            SetShaderValueMatrix(treeShader, viewLoc, rlGetMatrixModelview());
-            SetShaderValueMatrix(treeShader, projLoc, rlGetMatrixProjection());
-            treeMaterial.shader = treeShader;
-            DrawMeshInstanced(treeModel.meshes[0], treeMaterial, treeTransforms, treeCount);
-            
-            ParticleSystemStep(&fogSystem, *usingCamera);
-
-
-            //for (u32 i = 0; i < 10; i++) {
-            //    DrawBillboard(*usingCamera, fogTexture, fogPositions[i], 1.f, RED);
-            //}
-            //Quaternion cabQuat = QuaternionFromEuler(0.f, cab.rotation.x * DEG2RAD, cab.rotation.y * DEG2RAD);
-            //mat4 cabMatrix = QuaternionToMatrix(cabQuat);
-            //cabMatrix = MatrixMultiply(cabMatrix, MatrixTranslate(cab.position.x, cab.position.y, cab.position.z));
-            //
-            //for (int i = 0; i < cab.model.meshCount; i++) {
-            //    Color prevColor = cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color;
-            //    cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
-            //    DrawMesh(cab.model.meshes[i], cab.model.materials[cab.model.meshMaterial[i]], cabMatrix);
-            //    cab.model.materials[cab.model.meshMaterial[i]].maps[MATERIAL_MAP_DIFFUSE].color = prevColor;
-            //}
-            //DrawBoundingBox(cab.bbox, RED);
-            //DrawSphere(lightPosition, 0.5f, RED);
         EndMode3D();
         DrawFPS(4, 4);
         if (freecam) {
@@ -405,7 +357,64 @@ int main() {
         DrawCrosshair(screenSize.x / 2, screenSize.y / 2, WHITE);
         EndDrawing();
     }
+
+    InstanceMeshRenderDataDestroy(forestImrd);
+
     return(0);
+}
+
+void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
+    UnloadModel(imrd._model);
+    UnloadMaterial(imrd.material);
+    // TODO: Double check if shader is unloaded as part of material
+    RL_FREE(imrd.transforms);
+}
+
+InstanceMeshRenderData ForestCreate(Image image, float density, v2 worldSize, v2 worldPos, float treeChance, float randTreeOffset) {
+    const i32 stride = PixelformatGetStride(image.format);
+    if (stride < 3) {
+        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
+        return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
+    }
+    const v2 imageSize = {(float)image.width, (float)image.height};
+    const u32 treesMax = (u32)ceilf((worldSize.x * density) * (worldSize.y * density));
+    u32 treeCount = 0;
+    Matrix *transforms = (Matrix*)RL_CALLOC(treesMax, sizeof(Matrix));
+    v2 pixelIncrF = imageSize / worldSize / density;
+    const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
+    const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
+    const byte* imageData = (byte*)image.data;
+    for (u32 x = 0; x < image.width; x += incrx) {
+        for (u32 y = 0; y < image.height; y += incry) {
+            u32 i = (x + y * image.width) * stride;
+            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0.f};
+            if (color.g == 255 && GetRandomChanceF(treeChance)) {
+                v2 treePos = v2{(float)x, (float)y} / imageSize * worldSize + worldPos;
+                transforms[treeCount] = MatrixTranslate(
+                    treePos.x + GetRandomValueF(-randTreeOffset, randTreeOffset),
+                    0.f, // TODO: Sample a heightmap to get a proper vertical tree position
+                    treePos.y + GetRandomValueF(-randTreeOffset, randTreeOffset));
+                treeCount++;
+            }
+        }
+    }
+
+    // TODO: Put into another function or something
+    Model model = LOAD_MODEL("tree.glb");
+    Mesh mesh = model.meshes[0];
+    Shader shader = LOAD_SHADER("instance.vs", "instance.fs");
+    shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
+    shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(shader, "instanceTransform");
+    Material material = LoadMaterialDefault();
+    material.shader = shader;
+
+    InstanceMeshRenderData imrd = {};
+    imrd.instanceCount = treeCount;
+    imrd.transforms = transforms;
+    imrd._model = model;
+    imrd.mesh = mesh;
+    imrd.material = material;
+    return imrd;
 }
 
 void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
@@ -513,18 +522,17 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     v3 flTire = cab->position + cab->frontLeftTire * cabRotationMatrix;
     v3 frTire = cab->position + cab->frontRightTire * cabRotationMatrix;
     v3 frontPoint = Vector3Lerp(flTire, frTire, 0.5f);
-    frontPoint.y = HeightmapSampleHeight(*heightmap, frontPoint.x, frontPoint.z);
+    frontPoint.y = heightmap ? HeightmapSampleHeight(*heightmap, frontPoint.x, frontPoint.z) : 0.f;
 
     v3 blTire = cab->position + cab->backLeftTire * cabRotationMatrix;
     v3 brTire = cab->position + cab->backRightTire * cabRotationMatrix;
     v3 backPoint = Vector3Lerp(blTire, brTire, 0.5f);
-    backPoint.y = HeightmapSampleHeight(*heightmap, backPoint.x, backPoint.z);
+    backPoint.y = heightmap ? HeightmapSampleHeight(*heightmap, backPoint.x, backPoint.z) : 0.f;
 
     cab->position.y = Lerp(frontPoint.y, backPoint.y, 0.5f);
     if (backPoint.y != 0.f || frontPoint.y != 0.f) {
         float tireHorSep = cab->frontLeftTire.x - cab->backLeftTire.x;
-        // Can probably be changed to just using a value
-        v2 pitchNormal = (Vector2Normalize(V2(cab->frontLeftTire.x, frontPoint.y) - V2(cab->backLeftTire.x, backPoint.y)));
+        v2 pitchNormal = (Vector2Normalize(v2{cab->frontLeftTire.x, frontPoint.y} - v2{cab->backLeftTire.x, backPoint.y}));
         cab->rotation.y = atan2(pitchNormal.y, pitchNormal.x) * RAD2DEG;
     } else {
         cab->rotation.y = 0.f;
@@ -626,11 +634,11 @@ Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3
 }
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     v2 rectBegin = {heightmap.position.x, heightmap.position.z};
-    v2 rectEnd = rectBegin + V2(heightmap.size.x, heightmap.size.z);
+    v2 rectEnd = rectBegin + v2{heightmap.size.x, heightmap.size.z};
     if (PointInRectangle(rectBegin, rectEnd, {x, z})) {
-        v2 abspos = V2(x, z) - rectBegin;
-        v2 normpos = abspos / V2(heightmap.size.x, heightmap.size.z);
-        v2 datapos = normpos * V2((float)heightmap.heightDataWidth, (float)heightmap.heightDataHeight);
+        v2 abspos = v2{x, z} - rectBegin;
+        v2 normpos = abspos / v2{heightmap.size.x, heightmap.size.z};
+        v2 datapos = normpos * v2{(float)heightmap.heightDataWidth, (float)heightmap.heightDataHeight};
         v2 dataposFract = Vector2Fract(datapos);
         u32 dataX = datapos.x;
         u32 dataY = datapos.y;
