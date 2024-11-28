@@ -38,6 +38,7 @@ struct ForestGenerationInfo {
     float randomPositionOffset;
     float randomYDip;
     float randomTiltDegrees;
+    Heightmap* heightmap;
 };
 
 struct InstanceMeshRenderData {
@@ -49,7 +50,7 @@ struct InstanceMeshRenderData {
     Heightmap *heightmap;
 };
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
-InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info);
+InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // TODO: SIMD-fy
@@ -61,6 +62,7 @@ struct Particle {
     v3 position;
     float life;
 };
+
 
 #define MAX_PARTICLES 192
 struct ParticleSystem {
@@ -76,7 +78,6 @@ struct ParticleSystem {
     u32 _index;
 };
 void ParticleSystemStep(ParticleSystem *psys, Camera3D camera);
-void ParticleSystemDraw(ParticleSystem *psys);
 
 struct List {
     void** data;
@@ -105,7 +106,7 @@ struct Heightmap {
     Model debugModel;
     u32 width;
 };
-Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3 position, v3 size, u32 resdiv);
+Heightmap HeightmapCreate(Image heightmapImage, Texture texture, v3 position, v3 size, u32 resdiv);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
@@ -249,15 +250,43 @@ i32 PixelformatGetStride(i32 format) {
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
 
-Shader passthroughShader = {};
-Shader passthroughInstShader = {};
-
-void InitGlobals() {
-    passthroughShader = LOAD_SHADER("passthrough.vs", "passthrough.fs");
-    passthroughShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(passthroughShader, "mvp");
-    passthroughShader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(passthroughShader, "viewPos");
+namespace global {
+    Material litInstancedMaterial;
+    Material litMaterial;
 }
 
+void InitGlobals() {
+    Shader sh;
+    Material mat;
+    
+    sh = LOAD_SHADER("lightInstanced.vs", "light.fs");
+    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
+    sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
+    mat = LoadMaterialDefault();
+    mat.shader = sh;
+    global::litInstancedMaterial = mat;
+
+    sh = LOAD_SHADER("light.vs", "light.fs");
+    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
+    sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
+    mat = LoadMaterialDefault();
+    mat.shader = sh;
+    global::litMaterial = mat;
+}
+
+void UpdateGlobalMaterials(v3 playerPosition) {
+    float pos[3] = {playerPosition.x, playerPosition.y, playerPosition.z};
+    SetShaderValue(
+        global::litInstancedMaterial.shader,
+        GetShaderLocation(global::litInstancedMaterial.shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
+    SetShaderValue(
+        global::litMaterial.shader,
+        GetShaderLocation(global::litMaterial.shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
+}
 
 int main() {
     u32 freecam = 0;
@@ -268,6 +297,10 @@ int main() {
     SetTargetFPS(60);
     DisableCursor();
     InitGlobals();
+
+    Shader shader = LOAD_SHADER("lightInstanced.vs", "light.fs");
+    shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
+    shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(shader, "instanceTransform");
 
     Cab cab = {};
     cab.model = LOAD_MODEL("cab.m3d");
@@ -314,18 +347,26 @@ int main() {
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
     UnloadImage(img);
 
-    //Heightmap terrainHeightmap = HeightmapCreate("")
+    v3 terrainSize = {50.f, 8.f, 50.f};
+    v3 terrainPosition = terrainSize / -2.f;
+    terrainPosition.y = 0.f;
+
+    Image heightmapImage = LOAD_IMAGE("heightmap.png");
+    Texture heightmapTexture = LOAD_TEXTURE("heightmap_texture.png");
+    Heightmap terrainHeightmap = HeightmapCreate(heightmapImage, heightmapTexture, terrainPosition, terrainSize, 2);
 
     Image terrainImage = LOAD_IMAGE("terrainmap.png");
+    Model treeModel = LOAD_MODEL("tree.glb");
     ForestGenerationInfo forestGenInfo = {};
     forestGenInfo.density = 0.6f;
-    forestGenInfo.worldSize = {50.f, 50.f};
-    forestGenInfo.worldPosition = forestGenInfo.worldSize / -2.f;
+    forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
+    forestGenInfo.worldPosition = v2{terrainPosition.x, terrainPosition.z};
     forestGenInfo.treeChance = 90.f;
     forestGenInfo.randomPositionOffset = 0.25f;
-    forestGenInfo.randomYDip = 5.f;
+    forestGenInfo.randomYDip = 0.f;
     forestGenInfo.randomTiltDegrees = 10.f;
-    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo);
+    forestGenInfo.heightmap = &terrainHeightmap;
+    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo, treeModel.meshes[0], global::litInstancedMaterial);
     UnloadImage(terrainImage);
     /*
         TODO: Add a random color tint to the trees
@@ -338,6 +379,7 @@ int main() {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
+
         v2 mouseScroll = GetMouseWheelMoveV();
         cameraSpeed = fclampf(cameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
 
@@ -345,6 +387,7 @@ int main() {
         CabUpdate(&cab, &rotationStep, NULL);
         v2 hDriverPosition = Vector2Rotate({cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
         v3 driverPosition = v3{hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y} + cab.position;
+
 
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
@@ -366,6 +409,8 @@ int main() {
             usingCamera = &camera;
         }
 
+        UpdateGlobalMaterials(usingCamera->position);
+
         BeginMode3D(*usingCamera);
             rlDisableBackfaceCulling();
             rlDisableDepthMask();
@@ -373,6 +418,7 @@ int main() {
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
             DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             DrawGrid(20, 1.f);
         EndMode3D();
         DrawFPS(4, 4);
@@ -395,7 +441,7 @@ void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
     RL_FREE(imrd.transforms);
 }
 
-InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info) {
+InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material) {
     const i32 stride = PixelformatGetStride(image.format);
     if (stride < 3) {
         TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
@@ -412,33 +458,23 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info) {
     for (u32 x = 0; x < image.width; x += incrx) {
         for (u32 y = 0; y < image.height; y += incry) {
             u32 i = (x + y * image.width) * stride;
-            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0.f};
+            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
             if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
                 v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
                 transforms[treeCount] = MatrixRotateY(GetRandomValueF(0.f, PI));
                 transforms[treeCount] *= MatrixRotateZ(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
                 transforms[treeCount] *= MatrixTranslate(
                     treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
-                    GetRandomValueF(-info.randomYDip, 0.f), // TODO: Sample a heightmap to get a proper vertical tree position
+                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(*info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
                     treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
                 treeCount++;
             }
         }
     }
 
-    // TODO: Put into another function or something
-    Model model = LOAD_MODEL("tree.glb");
-    Mesh mesh = model.meshes[0];
-    Shader shader = LOAD_SHADER("instance.vs", "instance.fs");
-    shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
-    shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(shader, "instanceTransform");
-    Material material = LoadMaterialDefault();
-    material.shader = shader;
-
     InstanceMeshRenderData imrd = {};
     imrd.instanceCount = treeCount;
     imrd.transforms = transforms;
-    imrd._model = model;
     imrd.mesh = mesh;
     imrd.material = material;
     return imrd;
@@ -635,6 +671,7 @@ Heightmap HeightmapCreate(Image heightmapImage, Texture texture, v3 position, v3
     heightmap.size = size;
     heightmap.texture = texture;
     heightmap.model = LoadModelFromMesh(hmMesh);
+    heightmap.model.materials[0] = global::litMaterial;
     heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = heightmap.texture;
     heightmap.position = position;
     heightmap.debugModel = {};
