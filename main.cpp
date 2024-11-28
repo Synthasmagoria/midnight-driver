@@ -21,29 +21,49 @@ typedef Vector2 v2;
 #define FRAMERATE 60
 #define TAU PI * 2.f
 
-typedef struct {
+struct ForestGenerationInfo;
+struct InstanceMeshRenderData;
+struct QuadraticBezier;
+struct Particle;
+struct ParticleSystem;
+struct List;
+struct Heightmap;
+struct Cab;
+
+struct ForestGenerationInfo {
+    v2 worldPosition;
+    v2 worldSize;
+    float density;
+    float treeChance;
+    float randomPositionOffset;
+    float randomYDip;
+    float randomTiltDegrees;
+};
+
+struct InstanceMeshRenderData {
     Matrix *transforms;
     u32 instanceCount;
     Model _model;
     Mesh mesh;
     Material material;
-} InstanceMeshRenderData;
+    Heightmap *heightmap;
+};
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
-InstanceMeshRenderData ForestCreate(Image image, float density, v2 worldSize, v2 worldPos, float treeChance, float randTreeOffset);
+InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info);
 
-typedef struct {v2 p1; v2 p2; v2 p3;} QuadraticBezier;
+struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // TODO: SIMD-fy
 float QuadraticBezierLerp(QuadraticBezier qb, float val) {
     return Vector2Lerp(Vector2Lerp(qb.p1, qb.p2, val), Vector2Lerp(qb.p2, qb.p3, val), val).y;
 }
 
-typedef struct {
+struct Particle {
     v3 position;
     float life;
-} Particle;
+};
 
 #define MAX_PARTICLES 192
-typedef struct {
+struct ParticleSystem {
     Texture2D texture;
     float rate;
     v3 speed;
@@ -54,15 +74,15 @@ typedef struct {
     float _spawnTimer;
     u32 _number;
     u32 _index;
-} ParticleSystem;
+};
 void ParticleSystemStep(ParticleSystem *psys, Camera3D camera);
 void ParticleSystemDraw(ParticleSystem *psys);
 
-typedef struct {
+struct List {
     void** data;
     u32 size;
     u32 capacity;
-} List;
+};
 List ListCreate(u32 size);
 void ListInit(List *list, u32 size);
 void ListDestroy(List *list);
@@ -72,7 +92,7 @@ void* ListGet(List *list, u32 ind);
 void ListSet(List *list, u32 ind, void* val);
 void ListPushBack(List *list, void* val);
 
-typedef struct {
+struct Heightmap {
     Model model;
     Image heightmap;
     Texture2D texture;
@@ -84,16 +104,12 @@ typedef struct {
     float *heightData;
     Model debugModel;
     u32 width;
-} Heightmap;
+};
 Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3 position, v3 size, u32 resdiv);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
-typedef struct {
-    v3 position;
-} Terrainmap;
-
-typedef struct {
+struct Cab {
     v3 offset;
     Model model;
     float speed;
@@ -115,7 +131,7 @@ typedef struct {
     float tireHorizontalSeparation;
     v3 driversSeat;
     BoundingBox bbox;
-} Cab;
+};
 void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap *heightmap);
 
 void CameraUpdateDebug(Camera *camera, float speed);
@@ -147,9 +163,9 @@ v2 Vector2Fract(v2 v) {
 float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
 }
-// NOTE: only supports up to 2 decimals
+// NOTE: only supports up to 3 decimals
 float GetRandomValueF(float min, float max) {
-    return ((float)GetRandomValue((i32)(min * 100.f), (i32)(max * 100.f))) / 100.f;
+    return ((float)GetRandomValue((i32)(min * 1000.f), (i32)(max * 1000.f))) / 1000.f;
 }
 bool GetRandomChanceF(float percentage) {
     return GetRandomValueF(0.f, 100.f) < percentage;
@@ -298,9 +314,18 @@ int main() {
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
     UnloadImage(img);
 
+    //Heightmap terrainHeightmap = HeightmapCreate("")
+
     Image terrainImage = LOAD_IMAGE("terrainmap.png");
-    v2 forestSize = {50.f, 50.f};
-    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, 0.6f, forestSize, forestSize / -2.f, 90.f, 0.25f);
+    ForestGenerationInfo forestGenInfo = {};
+    forestGenInfo.density = 0.6f;
+    forestGenInfo.worldSize = {50.f, 50.f};
+    forestGenInfo.worldPosition = forestGenInfo.worldSize / -2.f;
+    forestGenInfo.treeChance = 90.f;
+    forestGenInfo.randomPositionOffset = 0.25f;
+    forestGenInfo.randomYDip = 5.f;
+    forestGenInfo.randomTiltDegrees = 10.f;
+    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo);
     UnloadImage(terrainImage);
     /*
         TODO: Add a random color tint to the trees
@@ -370,17 +395,17 @@ void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
     RL_FREE(imrd.transforms);
 }
 
-InstanceMeshRenderData ForestCreate(Image image, float density, v2 worldSize, v2 worldPos, float treeChance, float randTreeOffset) {
+InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info) {
     const i32 stride = PixelformatGetStride(image.format);
     if (stride < 3) {
         TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
         return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
     }
     const v2 imageSize = {(float)image.width, (float)image.height};
-    const u32 treesMax = (u32)ceilf((worldSize.x * density) * (worldSize.y * density));
+    const u32 treesMax = (u32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
     u32 treeCount = 0;
     Matrix *transforms = (Matrix*)RL_CALLOC(treesMax, sizeof(Matrix));
-    v2 pixelIncrF = imageSize / worldSize / density;
+    v2 pixelIncrF = imageSize / info.worldSize / info.density;
     const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
     const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
     const byte* imageData = (byte*)image.data;
@@ -388,12 +413,14 @@ InstanceMeshRenderData ForestCreate(Image image, float density, v2 worldSize, v2
         for (u32 y = 0; y < image.height; y += incry) {
             u32 i = (x + y * image.width) * stride;
             Color color = {imageData[i], imageData[i+1], imageData[i+2], 0.f};
-            if (color.g == 255 && GetRandomChanceF(treeChance)) {
-                v2 treePos = v2{(float)x, (float)y} / imageSize * worldSize + worldPos;
-                transforms[treeCount] = MatrixTranslate(
-                    treePos.x + GetRandomValueF(-randTreeOffset, randTreeOffset),
-                    0.f, // TODO: Sample a heightmap to get a proper vertical tree position
-                    treePos.y + GetRandomValueF(-randTreeOffset, randTreeOffset));
+            if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
+                v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
+                transforms[treeCount] = MatrixRotateY(GetRandomValueF(0.f, PI));
+                transforms[treeCount] *= MatrixRotateZ(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
+                transforms[treeCount] *= MatrixTranslate(
+                    treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
+                    GetRandomValueF(-info.randomYDip, 0.f), // TODO: Sample a heightmap to get a proper vertical tree position
+                    treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
                 treeCount++;
             }
         }
@@ -581,53 +608,34 @@ v3 GetCameraRightNorm(Camera *camera) {
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
 
-Heightmap HeightmapCreate(const char* heightmapPath, const char* texturePath, v3 position, v3 size, u32 resdiv) {
-    Heightmap heightmap = {};
-    heightmap.heightmap = LoadImage(heightmapPath);
-    u32 stride = 0;
-    u32 len = heightmap.heightmap.width * heightmap.heightmap.height;
-    switch (heightmap.heightmap.format) {
-        case PIXELFORMAT_UNCOMPRESSED_GRAYSCALE:
-            stride = 1;
-            break;
-        case PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA:
-            stride = 2;
-            break;
-        case PIXELFORMAT_UNCOMPRESSED_R8G8B8:
-            stride = 3;
-            break;
-        case PIXELFORMAT_UNCOMPRESSED_R8G8B8A8:
-            stride = 4;
-            break;
-        default:
-            TraceLog(4, "Heightmap: Heightmap was not of a compatible format");
-            UnloadImage(heightmap.heightmap);
-            return {};
-    }
+Heightmap HeightmapCreate(Image heightmapImage, Texture texture, v3 position, v3 size, u32 resdiv) {
+    const u32 stride = PixelformatGetStride(heightmapImage.format);
+    const u32 len = heightmapImage.width * heightmapImage.height;
+    const u32 heightDataWidth = heightmapImage.width >> resdiv;
+    const u32 heightDataHeight = heightmapImage.height >> resdiv;
 
-    heightmap.heightDataWidth = heightmap.heightmap.width >> resdiv;
-    heightmap.heightDataHeight = heightmap.heightmap.height >> resdiv;
+    float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
+    byte* data = (byte*)heightmapImage.data;
+    u32 dataW = heightDataWidth;
+    u32 imgw = heightmapImage.width;
 
-    float *heightData = (float*)malloc(heightmap.heightDataWidth * heightmap.heightDataHeight * sizeof(float));
-    heightmap.heightData = heightData;
-    byte* data = (byte*)heightmap.heightmap.data;
-    u32 dataW = heightmap.heightDataWidth;
-    u32 imgw = heightmap.heightmap.width;
-
-    for (u32 x = 0; x < heightmap.heightDataWidth; x++) {
-        for (u32 y = 0; y < heightmap.heightDataHeight; y++) {
+    for (u32 x = 0; x < heightDataWidth; x++) {
+        for (u32 y = 0; y < heightDataHeight; y++) {
             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
             heightData[x + y * dataW] = ((float)value / 255.f) * size.y;
         }
     }
 
-    Texture2D hmTexture = LoadTextureFromImage(heightmap.heightmap);
+    Mesh hmMesh = GenMeshHeightmap(heightmapImage, size);
+    Heightmap heightmap = {};
+    heightmap.heightData = heightData;
+    heightmap.heightmap = heightmapImage;
+    heightmap.heightDataWidth = heightDataWidth;
+    heightmap.heightDataHeight = heightDataHeight;
     heightmap.size = size;
-    Mesh hmMesh = GenMeshHeightmap(heightmap.heightmap, size);
-    heightmap.texture = LoadTexture(texturePath);
+    heightmap.texture = texture;
     heightmap.model = LoadModelFromMesh(hmMesh);
     heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = heightmap.texture;
-    heightmap.model.materials[0].shader = LoadShader("resources/shaders/heightmap.vs", "resources/shaders/heightmap.fs");
     heightmap.position = position;
     heightmap.debugModel = {};
     return heightmap;
