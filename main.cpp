@@ -26,6 +26,8 @@ struct InstanceMeshRenderData;
 struct QuadraticBezier;
 struct Particle;
 struct ParticleSystem;
+struct BillboardParticle;
+struct BillboardParticleSystem;
 struct List;
 struct Heightmap;
 struct Cab;
@@ -42,7 +44,7 @@ struct ForestGenerationInfo {
 };
 
 struct InstanceMeshRenderData {
-    Matrix *transforms;
+    mat4 *transforms;
     u32 instanceCount;
     Model _model;
     Mesh mesh;
@@ -58,26 +60,39 @@ float QuadraticBezierLerp(QuadraticBezier qb, float val) {
     return Vector2Lerp(Vector2Lerp(qb.p1, qb.p2, val), Vector2Lerp(qb.p2, qb.p3, val), val).y;
 }
 
-struct Particle {
+#define PARTICLE_SYSTEM_MAX_PARTICLES 512
+struct ParticleSystem {
+    mat4 *_transforms;
+    Mesh _quad;
+    Material _material;
+    v3 velocity;
+    i32 count;
+};
+ParticleSystem ParticleSystemCreate(Texture texture);
+void ParticleSystemDestroy(ParticleSystem *psys);
+void ParticleSystemStep(ParticleSystem *psys);
+void ParticleSystemDraw(ParticleSystem *psys);
+
+struct BillboardParticle {
     v3 position;
+    Color color;
     float life;
 };
 
-
-#define MAX_PARTICLES 192
-struct ParticleSystem {
+#define MAX_BILLBOARD_PARTICLES 192
+struct BillboardParticleSystem {
     Texture2D texture;
     float rate;
     v3 speed;
     float life;
     QuadraticBezier alphaCurve;
-    Particle particles[MAX_PARTICLES];
+    BillboardParticle particles[MAX_BILLBOARD_PARTICLES];
     int blendMode;
     float _spawnTimer;
     u32 _number;
     u32 _index;
 };
-void ParticleSystemStep(ParticleSystem *psys, Camera3D camera);
+void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera);
 
 struct List {
     void** data;
@@ -253,6 +268,7 @@ i32 PixelformatGetStride(i32 format) {
 namespace global {
     Material litInstancedMaterial;
     Material litMaterial;
+    Material unlitInstancedMaterial;
 }
 
 void InitGlobals() {
@@ -272,6 +288,13 @@ void InitGlobals() {
     mat = LoadMaterialDefault();
     mat.shader = sh;
     global::litMaterial = mat;
+
+    sh = LOAD_SHADER("unlitInstanced.vs", "passthrough.fs");
+    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
+    sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
+    mat = LoadMaterialDefault();
+    mat.shader = sh;
+    global::unlitInstancedMaterial = mat;
 }
 
 void UpdateGlobalMaterials(v3 playerPosition) {
@@ -355,6 +378,9 @@ int main() {
     Texture heightmapTexture = LOAD_TEXTURE("heightmap_texture.png");
     Heightmap terrainHeightmap = HeightmapCreate(heightmapImage, heightmapTexture, terrainPosition, terrainSize, 2);
 
+    ParticleSystem psys = ParticleSystemCreate(LOAD_TEXTURE("star.png"));
+    psys.velocity = {1.f, 0.f, 0.f};
+
     Image terrainImage = LOAD_IMAGE("terrainmap.png");
     Model treeModel = LOAD_MODEL("tree.glb");
     ForestGenerationInfo forestGenInfo = {};
@@ -388,7 +414,6 @@ int main() {
         v2 hDriverPosition = Vector2Rotate({cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
         v3 driverPosition = v3{hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y} + cab.position;
 
-
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
             if (freecam) {
@@ -419,6 +444,8 @@ int main() {
             rlEnableDepthMask();
             DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
+            ParticleSystemStep(&psys);
+            ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
         EndMode3D();
         DrawFPS(4, 4);
@@ -429,6 +456,7 @@ int main() {
         EndDrawing();
     }
 
+    ParticleSystemDestroy(&psys);
     InstanceMeshRenderDataDestroy(forestImrd);
 
     return(0);
@@ -450,7 +478,7 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
     const v2 imageSize = {(float)image.width, (float)image.height};
     const u32 treesMax = (u32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
     u32 treeCount = 0;
-    Matrix *transforms = (Matrix*)RL_CALLOC(treesMax, sizeof(Matrix));
+    mat4 *transforms = (mat4*)RL_CALLOC(treesMax, sizeof(mat4));
     v2 pixelIncrF = imageSize / info.worldSize / info.density;
     const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
     const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
@@ -480,24 +508,57 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
     return imrd;
 }
 
-void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
+ParticleSystem ParticleSystemCreate(Texture texture) {
+    ParticleSystem psys = {};
+    psys._material = global::unlitInstancedMaterial;
+    psys._material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
+    psys._quad = GenMeshPlane(1.f, 1.f, 1.f, 1);
+    psys._transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
+    psys.count = 64;
+    for (i32 i = 0; i < psys.count; i++) {
+        psys._transforms[i] = MatrixTranslate(
+            GetRandomValueF(-10.f, 10.f),
+            GetRandomValueF(-10.f, 10.f),
+            GetRandomValueF(-10.f, 10.f));
+    }
+    return psys;
+}
+
+void ParticleSystemDestroy(ParticleSystem *psys) {
+    UnloadMesh(psys->_quad);
+    RL_FREE(psys->_transforms);
+}
+
+void ParticleSystemStep(ParticleSystem *psys) {
+    v3 stepVelocity = psys->velocity * FRAME_TIME;
+    mat4 transpose = MatrixTranslate(stepVelocity.x, stepVelocity.y, stepVelocity.z);
+    for (i32 i = 0; i < psys->count; i++) {
+        psys->_transforms[i] *= transpose;
+    }
+}
+
+void ParticleSystemDraw(ParticleSystem *psys) {
+    DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
+}
+
+void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera) {
     psys->_spawnTimer += psys->rate * FRAME_TIME;
     while (psys->_spawnTimer >= 1.f) {
         psys->_spawnTimer -= 1.f;
-        if (psys->_number + 1 < MAX_PARTICLES) {
+        if (psys->_number + 1 < MAX_BILLBOARD_PARTICLES) {
             psys->_number++;
-            Particle *p = &psys->particles[(psys->_index + psys->_number) % MAX_PARTICLES];
+            BillboardParticle *p = &psys->particles[(psys->_index + psys->_number) % MAX_BILLBOARD_PARTICLES];
             p->position.y = 0.f;
             p->life = psys->life;
         }
     }
 
-    Particle *parts[MAX_PARTICLES] = {NULL};
-    float dists[MAX_PARTICLES] = {-1.f};
+    BillboardParticle *parts[MAX_BILLBOARD_PARTICLES] = {NULL};
+    float dists[MAX_BILLBOARD_PARTICLES] = {-1.f};
     v2 cameraPosition = {camera.position.x, camera.position.z};
     v2 cameraTarget = {camera.target.x, camera.target.z};
     for (u32 i = 0; i < psys->_number; i++) {
-        Particle *p = &psys->particles[(psys->_index + i) % MAX_PARTICLES];
+        BillboardParticle *p = &psys->particles[(psys->_index + i) % MAX_BILLBOARD_PARTICLES];
 
         p->position = p->position + psys->speed * FRAME_TIME;
         p->life -= FRAME_TIME;
@@ -509,8 +570,8 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
 
     // TODO: Sort from camera tangent line instead of position to fix clipping
     // TODO: Make max particles settable
-    Particle *sortedParts[MAX_PARTICLES] = {NULL};
-    float sortedDists[MAX_PARTICLES] = {1.f};
+    BillboardParticle *sortedParts[MAX_BILLBOARD_PARTICLES] = {NULL};
+    float sortedDists[MAX_BILLBOARD_PARTICLES] = {1.f};
     sortedParts[0] = parts[0];
     sortedDists[0] = dists[0];
     for (i32 i = 1; i < psys->_number; i++) {
@@ -535,7 +596,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
 
     rlSetBlendMode(psys->blendMode);
     for (u32 i = 0; i < psys->_number; i++) {
-        Particle *p = sortedParts[i];
+        BillboardParticle *p = sortedParts[i];
         float blendProgress = fclampf(1.f - p->life / psys->life, 0.f, 1.f);
         u8 alpha = (u8)(QuadraticBezierLerp(psys->alphaCurve, blendProgress) * 255.f);
         Color blend = {255, 255, 255, alpha};
@@ -544,7 +605,7 @@ void ParticleSystemStep(ParticleSystem *psys, Camera3D camera) {
     rlSetBlendMode(BLEND_ALPHA);
 
     while (psys->_number > 0 && psys->particles[psys->_index].life <= 0.f) {
-        psys->_index = (psys->_index + 1) % MAX_PARTICLES;
+        psys->_index = (psys->_index + 1) % MAX_BILLBOARD_PARTICLES;
         psys->_number--;
     }
 }
