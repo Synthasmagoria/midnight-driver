@@ -29,6 +29,7 @@ struct ParticleSystem;
 struct BillboardParticle;
 struct BillboardParticleSystem;
 struct List;
+struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
 
@@ -49,7 +50,6 @@ struct InstanceMeshRenderData {
     Model _model;
     Mesh mesh;
     Material material;
-    Heightmap *heightmap;
 };
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
@@ -108,6 +108,15 @@ void* ListGet(List *list, u32 ind);
 void ListSet(List *list, u32 ind, void* val);
 void ListPushBack(List *list, void* val);
 
+struct HeightmapGenerationInfo {
+    Image *heightmapImage;
+    Texture *terrainMapTexture;
+    Texture *terrainTexture;
+    v3 position;
+    v3 size;
+    u32 resdiv;
+};
+
 struct Heightmap {
     Model model;
     Image heightmap;
@@ -121,7 +130,7 @@ struct Heightmap {
     Model debugModel;
     u32 width;
 };
-Heightmap HeightmapCreate(Image heightmapImage, Texture texture, v3 position, v3 size, u32 resdiv);
+Heightmap HeightmapCreate(HeightmapGenerationInfo info);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
@@ -269,6 +278,7 @@ namespace global {
     Material litInstancedMaterial;
     Material litMaterial;
     Material unlitInstancedMaterial;
+    Material litTerrainMaterial;
 }
 
 void InitGlobals() {
@@ -276,25 +286,29 @@ void InitGlobals() {
     Material mat;
     
     sh = LOAD_SHADER("lightInstanced.vs", "light.fs");
-    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
     global::litInstancedMaterial = mat;
 
     sh = LOAD_SHADER("light.vs", "light.fs");
-    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     mat = LoadMaterialDefault();
     mat.shader = sh;
     global::litMaterial = mat;
 
     sh = LOAD_SHADER("unlitInstanced.vs", "passthrough.fs");
-    sh.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(sh, "mvp");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
     global::unlitInstancedMaterial = mat;
+
+    sh = LOAD_SHADER("light.vs", "lightTerrain.fs");
+    sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
+    sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
+    mat = LoadMaterialDefault();
+    mat.shader = sh;
+    global::litTerrainMaterial = mat;
 }
 
 void UpdateGlobalMaterials(v3 playerPosition) {
@@ -374,9 +388,14 @@ int main() {
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
-    Image heightmapImage = LOAD_IMAGE("heightmap.png");
-    Texture heightmapTexture = LOAD_TEXTURE("heightmap_texture.png");
-    Heightmap terrainHeightmap = HeightmapCreate(heightmapImage, heightmapTexture, terrainPosition, terrainSize, 2);
+    HeightmapGenerationInfo hgi = {};
+    hgi.heightmapImage = &LOAD_IMAGE("heightmap.png");
+    hgi.terrainMapTexture = &LOAD_TEXTURE("terrainMap.png");
+    hgi.terrainTexture = &LOAD_TEXTURE("terrain.png");
+    hgi.position = terrainPosition;
+    hgi.size = terrainSize;
+    hgi.resdiv = 2;
+    Heightmap terrainHeightmap = HeightmapCreate(hgi);
 
     ParticleSystem psys = ParticleSystemCreate(LOAD_TEXTURE("star.png"));
     psys.velocity = {1.f, 0.f, 0.f};
@@ -443,6 +462,9 @@ int main() {
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
             DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawMeshInstanced(treeModel.meshes[1], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawMeshInstanced(treeModel.meshes[2], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawMeshInstanced(treeModel.meshes[3], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
@@ -705,36 +727,39 @@ v3 GetCameraRightNorm(Camera *camera) {
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
 
-Heightmap HeightmapCreate(Image heightmapImage, Texture texture, v3 position, v3 size, u32 resdiv) {
-    const u32 stride = PixelformatGetStride(heightmapImage.format);
-    const u32 len = heightmapImage.width * heightmapImage.height;
-    const u32 heightDataWidth = heightmapImage.width >> resdiv;
-    const u32 heightDataHeight = heightmapImage.height >> resdiv;
+Heightmap HeightmapCreate(HeightmapGenerationInfo info) {
+    const u32 resdiv = info.resdiv;
+    const Image *image = info.heightmapImage;
+    const u32 stride = PixelformatGetStride(image->format);
+    const u32 len = info.heightmapImage->width * info.heightmapImage->height;
+    const u32 heightDataWidth = image->width >> resdiv;
+    const u32 heightDataHeight = image->height >> resdiv;
 
     float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
-    byte* data = (byte*)heightmapImage.data;
+    byte* data = (byte*)info.heightmapImage->data;
     u32 dataW = heightDataWidth;
-    u32 imgw = heightmapImage.width;
+    u32 imgw = image->width;
 
     for (u32 x = 0; x < heightDataWidth; x++) {
         for (u32 y = 0; y < heightDataHeight; y++) {
             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
-            heightData[x + y * dataW] = ((float)value / 255.f) * size.y;
+            heightData[x + y * dataW] = ((float)value / 255.f) * info.size.y;
         }
     }
 
-    Mesh hmMesh = GenMeshHeightmap(heightmapImage, size);
+    Mesh hmMesh = GenMeshHeightmap(*image, info.size);
     Heightmap heightmap = {};
     heightmap.heightData = heightData;
-    heightmap.heightmap = heightmapImage;
+    heightmap.heightmap = *image;
     heightmap.heightDataWidth = heightDataWidth;
     heightmap.heightDataHeight = heightDataHeight;
-    heightmap.size = size;
-    heightmap.texture = texture;
+    heightmap.size = info.size;
+    heightmap.texture = *info.terrainMapTexture;
     heightmap.model = LoadModelFromMesh(hmMesh);
-    heightmap.model.materials[0] = global::litMaterial;
-    heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = heightmap.texture;
-    heightmap.position = position;
+    heightmap.model.materials[0] = global::litTerrainMaterial;
+    heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
+    heightmap.model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
+    heightmap.position = info.position;
     heightmap.debugModel = {};
     return heightmap;
 }
