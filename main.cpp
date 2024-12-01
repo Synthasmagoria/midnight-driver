@@ -323,6 +323,11 @@ void UpdateGlobalMaterials(v3 playerPosition) {
         GetShaderLocation(global::litMaterial.shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
+    SetShaderValue(
+        global::litTerrainMaterial.shader,
+        GetShaderLocation(global::litMaterial.shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
 }
 
 int main() {
@@ -390,7 +395,7 @@ int main() {
 
     HeightmapGenerationInfo hgi = {};
     hgi.heightmapImage = &LOAD_IMAGE("heightmap.png");
-    hgi.terrainMapTexture = &LOAD_TEXTURE("terrainMap.png");
+    hgi.terrainMapTexture = &LOAD_TEXTURE("terrainmap_blurred.png");
     hgi.terrainTexture = &LOAD_TEXTURE("terrain.png");
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
