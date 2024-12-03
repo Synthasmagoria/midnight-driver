@@ -416,19 +416,37 @@ int main() {
     forestGenInfo.randomYDip = 0.f;
     forestGenInfo.randomTiltDegrees = 10.f;
     forestGenInfo.heightmap = &terrainHeightmap;
-    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo, treeModel.meshes[0], global::litInstancedMaterial);
-    UnloadImage(terrainImage);
     /*
         TODO: Add a random color tint to the trees
         TODO: Add a random texture to the trees
         TODO: Add 3 different tree models
         TODO: Add basic flora
     */
+    Material forestMaterial = global::litInstancedMaterial;
+    forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
+    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo, treeModel.meshes[0], global::litInstancedMaterial);
+    UnloadImage(terrainImage);
+
+    i32 backseatRenderWidth = 256;
+    i32 backseatRenderHeight = 128;
+    RenderTexture2D backseatRender = LoadRenderTexture(256, 128);
+    bool backseatRendered = false;
+    Texture2D priestTexture = LOAD_TEXTURE("priest.png");
+    Mesh rearMirror = GenMeshPlane(1.f, 1.f, 1, 1);
+    Material rearMirrorMat = LoadMaterialDefault();
+    rearMirrorMat.shader = LOAD_SHADER("passthrough.vs", "flip.fs");
+    rearMirrorMat.maps[MATERIAL_MAP_ALBEDO].texture = backseatRender.texture;
+    mat4 rearMirrorTransform = MatrixIdentity();
 
     while (!WindowShouldClose()) {
-        BeginDrawing();
-        ClearBackground(RAYWHITE);
 
+        if (!backseatRendered) {
+            BeginTextureMode(backseatRender);
+            ClearBackground({20, 20, 30, 255});
+            DrawTexture(priestTexture, backseatRenderWidth / -2, backseatRenderHeight / -2, WHITE);
+            EndTextureMode();
+            backseatRendered = true;
+        }
 
         v2 mouseScroll = GetMouseWheelMoveV();
         cameraSpeed = fclampf(cameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
@@ -460,6 +478,8 @@ int main() {
 
         UpdateGlobalMaterials(usingCamera->position);
 
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
         BeginMode3D(*usingCamera);
             rlDisableBackfaceCulling();
             rlDisableDepthMask();
@@ -471,6 +491,7 @@ int main() {
             DrawMeshInstanced(treeModel.meshes[2], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawMeshInstanced(treeModel.meshes[3], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
+            DrawMesh(rearMirror, rearMirrorMat, rearMirrorTransform);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
@@ -479,6 +500,11 @@ int main() {
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
         }
+        DrawTextureRec(
+            backseatRender.texture,
+            {0, 0, (float)backseatRenderWidth, (float)-backseatRenderHeight},
+            {0, 0},
+            WHITE);
         DrawCrosshair(screenSize.x / 2, screenSize.y / 2, WHITE);
         EndDrawing();
     }

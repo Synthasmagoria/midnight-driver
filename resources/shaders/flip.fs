@@ -9,5 +9,5 @@ uniform vec4 colDiffuse;
 out vec4 finalColor;
 
 void main() {
-    finalColor = texture(texture0, fragTexCoord) * colDiffuse;
+    finalColor = texture(texture0, vec2(fragTexCoord.x, 1.0 - fragTexCoord.y)) * colDiffuse;
 }
