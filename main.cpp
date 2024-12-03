@@ -135,29 +135,12 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
 struct Cab {
-    v3 offset;
     Model model;
-    float speed;
-    float maxSpeed;
-    float maxReverseSpeed;
-    float acceleration;
-    float friction;
-    float turn;
-    float turnRadius;
-    float turnSpeed;
-    float breakDeceleration;
-    float reverseAcceleration;
     v3 position;
-    v3 rotation;
-    v3 frontLeftTire;
-    v3 frontRightTire;
-    v3 backLeftTire;
-    v3 backRightTire;
-    float tireHorizontalSeparation;
-    v3 driversSeat;
-    BoundingBox bbox;
+    v3 frontSeat;
+    Camera *playerCamera;
 };
-void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap *heightmap);
+void CabUpdate(Cab *cab);
 
 void CameraUpdateDebug(Camera *camera, float speed);
 void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd);
@@ -344,35 +327,22 @@ int main() {
     shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
     shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(shader, "instanceTransform");
 
-    Cab cab = {};
-    cab.model = LOAD_MODEL("cab.m3d");
-    cab.speed = 0.f;
-    cab.maxSpeed = 1.f;
-    cab.maxReverseSpeed = 0.3f;
-    cab.acceleration = 0.007f;
-    cab.breakDeceleration = 0.02f;
-    cab.reverseAcceleration = 0.0065f;
-    cab.friction = 0.005f;
-    cab.driversSeat = {-0.1f, 0.7f, -0.25f};
-    cab.offset = {0.25f, 0.f, -0.06f};
-    cab.frontLeftTire = {0.8f, 0.f, -0.45f};
-    cab.frontRightTire = {0.8f, 0.f, 0.45f};
-    cab.backLeftTire = {-1.f, 0.f, -0.45f};
-    cab.backRightTire = {-1.f, 0.f, 0.45f};
-    cab.turnRadius = 30.f;
-    cab.turnSpeed = 1.f;
-    cab.bbox = GenBoundingBoxMeshes(cab.model.meshes, cab.model.meshCount);
-
     Camera camera = {};
     camera.fovy = 60.f;
+    camera.position = {0.f, 0.f, 0.f};
     camera.target = {1.f, 0.f, 0.f};
     camera.projection = CAMERA_PERSPECTIVE;
     camera.up = {0.f, 1.f, 0.f};
 
+    Cab cab = {};
+    cab.model = LOAD_MODEL("car.glb");
+    cab.frontSeat = 
+    cab.playerCamera = &camera;
+
     Camera debugCamera = {};
     camera.fovy = 60.f;
     camera.up = {0.f, 1.f, 0.f};
-    float cameraSpeed = 0.1f;
+    float debugCameraSpeed = 0.1f;
 
     Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
     Shader skyboxShader = LOAD_SHADER("skybox.vs", "skybox.fs");
@@ -427,34 +397,8 @@ int main() {
     InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo, treeModel.meshes[0], global::litInstancedMaterial);
     UnloadImage(terrainImage);
 
-    i32 backseatRenderWidth = 256;
-    i32 backseatRenderHeight = 128;
-    RenderTexture2D backseatRender = LoadRenderTexture(256, 128);
-    bool backseatRendered = false;
-    Texture2D priestTexture = LOAD_TEXTURE("priest.png");
-    Mesh rearMirror = GenMeshPlane(1.f, 1.f, 1, 1);
-    Material rearMirrorMat = LoadMaterialDefault();
-    rearMirrorMat.shader = LOAD_SHADER("passthrough.vs", "flip.fs");
-    rearMirrorMat.maps[MATERIAL_MAP_ALBEDO].texture = backseatRender.texture;
-    mat4 rearMirrorTransform = MatrixIdentity();
-
     while (!WindowShouldClose()) {
-
-        if (!backseatRendered) {
-            BeginTextureMode(backseatRender);
-            ClearBackground({20, 20, 30, 255});
-            DrawTexture(priestTexture, backseatRenderWidth / -2, backseatRenderHeight / -2, WHITE);
-            EndTextureMode();
-            backseatRendered = true;
-        }
-
-        v2 mouseScroll = GetMouseWheelMoveV();
-        cameraSpeed = fclampf(cameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
-
-        float rotationStep;
-        CabUpdate(&cab, &rotationStep, NULL);
-        v2 hDriverPosition = Vector2Rotate({cab.driversSeat.x, cab.driversSeat.z}, (360.f - cab.rotation.x) * DEG2RAD);
-        v3 driverPosition = v3{hDriverPosition.x, cab.driversSeat.y, hDriverPosition.y} + cab.position;
+        
 
         if (IsKeyPressed(KEY_BACKSPACE)) {
             freecam = freecam ? 0 : 1;
@@ -467,14 +411,17 @@ int main() {
             }
         }
 
+        v2 mouseScroll = GetMouseWheelMoveV();
+        debugCameraSpeed = fclampf(debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
         Camera *usingCamera;
         if (freecam) {
-            CameraUpdateDebug(&debugCamera, cameraSpeed);
+            CameraUpdateDebug(&debugCamera, debugCameraSpeed);
             usingCamera = &debugCamera;
         } else {
-            CameraUpdate(&camera, driverPosition, {-rotationStep * DEG2RAD, 0.f});
             usingCamera = &camera;
         }
+
+        CabUpdate(&cab);
 
         UpdateGlobalMaterials(usingCamera->position);
 
@@ -491,7 +438,7 @@ int main() {
             DrawMeshInstanced(treeModel.meshes[2], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawMeshInstanced(treeModel.meshes[3], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
-            DrawMesh(rearMirror, rearMirrorMat, rearMirrorTransform);
+            DrawModel(cab.model, cab.position, 1.f, WHITE);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
@@ -500,11 +447,6 @@ int main() {
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
         }
-        DrawTextureRec(
-            backseatRender.texture,
-            {0, 0, (float)backseatRenderWidth, (float)-backseatRenderHeight},
-            {0, 0},
-            WHITE);
         DrawCrosshair(screenSize.x / 2, screenSize.y / 2, WHITE);
         EndDrawing();
     }
@@ -663,6 +605,11 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
     }
 }
 
+void CabUpdate(Cab *cab) {
+    cab->playerCamera->position = cab->position + cab->frontSeat;
+}
+
+/*
 void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     cab->speed = fmaxf(cab->speed - cab->friction, 0.f);
     if (IsKeyDown(KEY_SPACE)) {
@@ -684,6 +631,7 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     } else if (cab->rotation.x >= 360.f) {
         cab->rotation.x -= 360.f;
     }
+    *rotationStepOut = rotationStep;
 
     float cabRotCos = cosf((360.f - cab->rotation.x) * DEG2RAD);
     float cabRotSin = sinf((360.f - cab->rotation.x) * DEG2RAD);
@@ -714,8 +662,7 @@ void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
     } else {
         cab->rotation.y = 0.f;
     }
-    *rotationStepOut = rotationStep;
-}
+}*/
 
 void CameraUpdateDebug(Camera *camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
