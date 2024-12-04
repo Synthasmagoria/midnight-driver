@@ -2,6 +2,7 @@
 #include "raymath.h"
 #include "stdlib.h"
 #include "stdint.h"
+#include "stdio.h"
 #include "rlgl.h"
 
 typedef uint8_t byte;
@@ -55,9 +56,11 @@ void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
-// TODO: SIMD-fy
+// https://www.desmos.com/calculator/scz7zhonfw
 float QuadraticBezierLerp(QuadraticBezier qb, float val) {
-    return Vector2Lerp(Vector2Lerp(qb.p1, qb.p2, val), Vector2Lerp(qb.p2, qb.p3, val), val).y;
+    v2 a = Vector2Lerp(qb.p1, qb.p2, val);
+    v2 b = Vector2Lerp(qb.p2, qb.p3, val);
+    return Vector2Lerp(a, b, val).y;
 }
 
 #define PARTICLE_SYSTEM_MAX_PARTICLES 512
@@ -134,13 +137,25 @@ Heightmap HeightmapCreate(HeightmapGenerationInfo info);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
+struct CabUpdateInfo {
+    v3 distanceTraveled;
+};
 struct Cab {
     Model model;
     v3 position;
     v3 frontSeat;
-    Camera *playerCamera;
+    v3 direction;
+    v3 velocity;
+    float speed;
+    float maxVelocity;
+    float acceleration;
+    float neutralDeceleration;
+    float breakDeceleration;
+    QuadraticBezier accelerationCurve;
+    QuadraticBezier reverseAccelerationCurve;
 };
-void CabUpdate(Cab *cab);
+void CabUpdate(Cab *cab, CabUpdateInfo *out);
+v3 CabGetFrontSeatPosition(Cab *cab);
 
 void CameraUpdateDebug(Camera *camera, float speed);
 void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd);
@@ -148,6 +163,28 @@ v3 GetCameraForwardNorm(Camera *camera);
 v3 GetCameraUpNorm(Camera *camera);
 v3 GetCameraRightNorm(Camera *camera);
 
+Vector3 QuaternionToEulerXZ(Quaternion q)
+{
+    Vector3 result = { 0 };
+
+    // Roll (x-axis rotation)
+    float x0 = 2.0f*(q.w*q.x + q.y*q.z);
+    float x1 = 1.0f - 2.0f*(q.x*q.x + q.y*q.y);
+    result.x = atan2f(x0, x1);
+
+    // Pitch (y-axis rotation)
+    float y0 = 2.0f*(q.w*q.y - q.z*q.x);
+    y0 = y0 > 1.0f ? 1.0f : y0;
+    y0 = y0 < -1.0f ? -1.0f : y0;
+    result.y = asinf(y0);
+
+    // Yaw (z-axis rotation)
+    float z0 = 2.0f*(q.w*q.z + q.x*q.y);
+    float z1 = 1.0f - 2.0f*(q.y*q.y + q.z*q.z);
+    result.z = atan2f(z0, z1);
+
+    return result;
+}
 int PointInRectangle(v2 begin, v2 end, v2 pt) {
     return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;
 }
@@ -170,6 +207,12 @@ v2 Vector2Fract(v2 v) {
 }
 float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
+}
+float fsignf(float val) {
+    return (float)(!signbit(val)) * 2.f - 1.f;
+}
+v2 v2clampv2(v2 val, v2 min, v2 max) {
+    return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
 }
 // NOTE: only supports up to 3 decimals
 float GetRandomValueF(float min, float max) {
@@ -256,12 +299,16 @@ i32 PixelformatGetStride(i32 format) {
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
+#define MatrixRotateRoll(rad) MatrixRotateX(rad)
+#define MatrixRotateYaw(rad) MatrixRotateY(rad)
+#define MatrixRotatePitch(rad) MatrixRotateZ(rad)
 
 namespace global {
     Material litInstancedMaterial;
     Material litMaterial;
     Material unlitInstancedMaterial;
     Material litTerrainMaterial;
+
 }
 
 void InitGlobals() {
@@ -314,7 +361,7 @@ void UpdateGlobalMaterials(v3 playerPosition) {
 }
 
 int main() {
-    u32 freecam = 0;
+    u32 freecam = 0; 
 
     v2 screenSize = {1440, 800};
     SetTraceLogLevel(4);
@@ -336,8 +383,19 @@ int main() {
 
     Cab cab = {};
     cab.model = LOAD_MODEL("car.glb");
-    cab.frontSeat = 
-    cab.playerCamera = &camera;
+    cab.position = {};
+    cab.frontSeat = {-0.13f, 1.65f, -0.44f};
+    cab.direction = {1.f, 0.f, 0.f};
+    cab.velocity = {};
+    cab.speed = 0.f;
+    cab.maxVelocity = 0.4f;
+    cab.acceleration = 0.01f;
+    cab.neutralDeceleration = 0.004f;
+    cab.breakDeceleration = 0.015f;
+    cab.accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
+    cab.reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
+
+    CabUpdateInfo cabUpdateInfo = {};
 
     Camera debugCamera = {};
     camera.fovy = 60.f;
@@ -410,6 +468,7 @@ int main() {
                 debugCamera.up = {0.f, 1.f, 0.f};
             }
         }
+        
 
         v2 mouseScroll = GetMouseWheelMoveV();
         debugCameraSpeed = fclampf(debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
@@ -418,10 +477,10 @@ int main() {
             CameraUpdateDebug(&debugCamera, debugCameraSpeed);
             usingCamera = &debugCamera;
         } else {
+            CabUpdate(&cab, &cabUpdateInfo);
+            CameraUpdate(&camera, CabGetFrontSeatPosition(&cab), {0.f, 0.f});
             usingCamera = &camera;
         }
-
-        CabUpdate(&cab);
 
         UpdateGlobalMaterials(usingCamera->position);
 
@@ -605,8 +664,36 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
     }
 }
 
-void CabUpdate(Cab *cab) {
-    cab->playerCamera->position = cab->position + cab->frontSeat;
+void CabUpdate(Cab *cab, CabUpdateInfo *out) {
+    bool inputAccelerate = IsKeyDown(KEY_SPACE);
+    bool inputBreak = IsKeyDown(KEY_LEFT_SHIFT);
+    if (inputAccelerate && inputBreak) {
+        // TODO: drift
+    } else if (inputAccelerate) {
+        cab->speed += cab->acceleration;
+    } else if (inputBreak) {
+        cab->speed -= cab->breakDeceleration;
+    } else {
+        float absSpeed = fabsf(cab->speed);
+        float speedSign = fsignf(cab->speed);
+        cab->speed = fmaxf(absSpeed - cab->neutralDeceleration, 0.f) * speedSign;
+    }
+    cab->speed = fclampf(cab->speed, -1.f, 1.f);
+
+    int inputSteer = (float)IsKeyDown(KEY_D) - (float)(IsKeyDown(KEY_A));
+    
+    float stepSpeed = 0.f;
+    if (cab->speed > 0.f) {
+        stepSpeed = QuadraticBezierLerp(cab->accelerationCurve, cab->speed);
+    } else if (cab->speed < 0.f) {
+        stepSpeed = QuadraticBezierLerp(cab->reverseAccelerationCurve, fabsf(cab->speed));
+    }
+
+    cab->velocity = cab->direction * stepSpeed * cab->maxVelocity;
+    cab->position += cab->velocity;
+}
+v3 CabGetFrontSeatPosition(Cab *cab) {
+    return cab->position + cab->frontSeat;
 }
 
 /*
@@ -684,14 +771,16 @@ void CameraUpdateDebug(Camera *camera, float speed) {
     camera->position.y += input.y * speed;
     camera->target = camera->position + targetDirection;
 }
+
 void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd) {
-    v3 targetDirection = camera->target - camera->position;
-    float sensitivity = 0.002f;
-    v2 rotationDelta = GetMouseDelta() * sensitivity - rotationAdd;
-    targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraUpNorm(camera), -rotationDelta.x);
-    targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraRightNorm(camera), -rotationDelta.y);
+    v3 target = Vector3Normalize(camera->target - camera->position);
+    v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
+    v2 mouseRotationStep = GetMouseDelta() * FRAME_TIME * -0.05f;
+    v2 eulerNext = v2clampv2(euler + mouseRotationStep, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
+    v2 eulerDiff = eulerNext - euler;
+    mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y); // TODO: Rename this to MatrixRotateYaw
     camera->position = position;
-    camera->target = camera->position * targetDirection;
+    camera->target = camera->position + target * rot;
 }
 v3 GetCameraForwardNorm(Camera *camera) {
     return Vector3Normalize(camera->target - camera->position);
