@@ -151,10 +151,17 @@ struct Cab {
     float acceleration;
     float neutralDeceleration;
     float breakDeceleration;
+    float turnDegrees;
+    float turnRadius;
+    float turnSpeed;
     QuadraticBezier accelerationCurve;
     QuadraticBezier reverseAccelerationCurve;
+    mat4 _rotmat;
 };
+void CabInit(Cab *cab);
+void CabFree(Cab *cab); // TODO: Use globally available resources
 void CabUpdate(Cab *cab, CabUpdateInfo *out);
+void CabDraw(Cab *cab);
 v3 CabGetFrontSeatPosition(Cab *cab);
 
 void CameraUpdateDebug(Camera *camera, float speed);
@@ -163,64 +170,43 @@ v3 GetCameraForwardNorm(Camera *camera);
 v3 GetCameraUpNorm(Camera *camera);
 v3 GetCameraRightNorm(Camera *camera);
 
-Vector3 QuaternionToEulerXZ(Quaternion q)
-{
-    Vector3 result = { 0 };
-
-    // Roll (x-axis rotation)
-    float x0 = 2.0f*(q.w*q.x + q.y*q.z);
-    float x1 = 1.0f - 2.0f*(q.x*q.x + q.y*q.y);
-    result.x = atan2f(x0, x1);
-
-    // Pitch (y-axis rotation)
-    float y0 = 2.0f*(q.w*q.y - q.z*q.x);
-    y0 = y0 > 1.0f ? 1.0f : y0;
-    y0 = y0 < -1.0f ? -1.0f : y0;
-    result.y = asinf(y0);
-
-    // Yaw (z-axis rotation)
-    float z0 = 2.0f*(q.w*q.z + q.x*q.y);
-    float z1 = 1.0f - 2.0f*(q.y*q.y + q.z*q.z);
-    result.z = atan2f(z0, z1);
-
-    return result;
-}
-int PointInRectangle(v2 begin, v2 end, v2 pt) {
+inline int PointInRectangle(v2 begin, v2 end, v2 pt) {
     return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;
 }
-const char* TextFormatVector3(v3 v) {
+inline const char* TextFormatVector3(v3 v) {
     return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);
 }
-void DrawTextShadow(const char* text, int x, int y, int fontSize, Color col, Color shadowCol) {
+inline void DrawTextShadow(const char* text, int x, int y, int fontSize, Color col, Color shadowCol) {
     DrawText(text, x + 1, y + 1, fontSize, shadowCol);
     DrawText(text, x, y, fontSize, col);
 }
-void DrawCrosshair(int x, int y, Color col) {
+inline void DrawCrosshair(int x, int y, Color col) {
     DrawLine(x - 4, y, x + 4, y, col);
     DrawLine(x, y - 4, x, y + 4, col);
 }
-float ffractf(float val) {
+inline float ffractf(float val) {
     return val - floorf(val);
 }
-v2 Vector2Fract(v2 v) {
+inline v2 Vector2Fract(v2 v) {
     return {ffractf(v.x), ffractf(v.y)};
 }
-float fclampf(float val, float min, float max) {
+inline float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
 }
-float fsignf(float val) {
+inline float fsignf(float val) {
     return (float)(!signbit(val)) * 2.f - 1.f;
 }
-v2 v2clampv2(v2 val, v2 min, v2 max) {
+inline v2 v2clampv2(v2 val, v2 min, v2 max) {
     return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
 }
 // NOTE: only supports up to 3 decimals
-float GetRandomValueF(float min, float max) {
+inline float GetRandomValueF(float min, float max) {
     return ((float)GetRandomValue((i32)(min * 1000.f), (i32)(max * 1000.f))) / 1000.f;
 }
-bool GetRandomChanceF(float percentage) {
+inline bool GetRandomChanceF(float percentage) {
     return GetRandomValueF(0.f, 100.f) < percentage;
 }
+
 u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
     byte *be = bp + len;
@@ -382,21 +368,8 @@ int main() {
     camera.up = {0.f, 1.f, 0.f};
 
     Cab cab = {};
-    cab.model = LOAD_MODEL("car.glb");
-    cab.position = {};
-    cab.frontSeat = {-0.13f, 1.65f, -0.44f};
-    cab.direction = {1.f, 0.f, 0.f};
-    cab.velocity = {};
-    cab.speed = 0.f;
-    cab.maxVelocity = 0.4f;
-    cab.acceleration = 0.01f;
-    cab.neutralDeceleration = 0.004f;
-    cab.breakDeceleration = 0.015f;
-    cab.accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
-    cab.reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
-
-    CabUpdateInfo cabUpdateInfo = {};
-
+    CabInit(&cab);
+    
     Camera debugCamera = {};
     camera.fovy = 60.f;
     camera.up = {0.f, 1.f, 0.f};
@@ -497,7 +470,7 @@ int main() {
             DrawMeshInstanced(treeModel.meshes[2], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawMeshInstanced(treeModel.meshes[3], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
-            DrawModel(cab.model, cab.position, 1.f, WHITE);
+            CabDraw(&cab);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
@@ -510,6 +483,7 @@ int main() {
         EndDrawing();
     }
 
+    CabFree(&cab);
     ParticleSystemDestroy(&psys);
     InstanceMeshRenderDataDestroy(forestImrd);
 
@@ -664,6 +638,20 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
     }
 }
 
+void CabInit(Cab *cab) {
+    cab->model = LOAD_MODEL("car.glb");
+    cab->frontSeat = {-0.13f, 1.65f, -0.44f};
+    cab->direction = {1.f, 0.f, 0.f};
+    cab->maxVelocity = 0.4f;
+    cab->acceleration = 0.01f;
+    cab->neutralDeceleration = 0.004f;
+    cab->breakDeceleration = 0.015f;
+    cab->turnRadius = 24.f;
+    cab->turnSpeed = 30.f;
+    cab->accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
+    cab->reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
+    cab->_rotmat = MatrixIdentity();
+}
 void CabUpdate(Cab *cab, CabUpdateInfo *out) {
     bool inputAccelerate = IsKeyDown(KEY_SPACE);
     bool inputBreak = IsKeyDown(KEY_LEFT_SHIFT);
@@ -680,8 +668,6 @@ void CabUpdate(Cab *cab, CabUpdateInfo *out) {
     }
     cab->speed = fclampf(cab->speed, -1.f, 1.f);
 
-    int inputSteer = (float)IsKeyDown(KEY_D) - (float)(IsKeyDown(KEY_A));
-    
     float stepSpeed = 0.f;
     if (cab->speed > 0.f) {
         stepSpeed = QuadraticBezierLerp(cab->accelerationCurve, cab->speed);
@@ -689,11 +675,27 @@ void CabUpdate(Cab *cab, CabUpdateInfo *out) {
         stepSpeed = QuadraticBezierLerp(cab->reverseAccelerationCurve, fabsf(cab->speed));
     }
 
+    float inputTurn = (float)IsKeyDown(KEY_D) - (float)(IsKeyDown(KEY_A));
+    float turnAmountStep = inputTurn * FRAME_TIME * cab->turnSpeed;
+    cab->turnDegrees = fclampf(cab->turnDegrees + turnAmountStep, -cab->turnRadius, cab->turnRadius);
+    cab->_rotmat = cab->_rotmat * MatrixRotateYaw(DEG2RAD * cab->turnDegrees * stepSpeed * cab->maxVelocity);
+    // TODO: Inefficient matrix multiplication
+    cab->direction = cab->direction * cab->_rotmat;
+
     cab->velocity = cab->direction * stepSpeed * cab->maxVelocity;
     cab->position += cab->velocity;
 }
+void CabDraw(Cab *cab) {
+    mat4 transform = cab->_rotmat * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
+    for (i32 i = 0; i < cab->model.meshCount; i++) {
+        DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], transform);
+    }
+}
 v3 CabGetFrontSeatPosition(Cab *cab) {
-    return cab->position + cab->frontSeat;
+    return cab->position + cab->frontSeat * cab->_rotmat;
+}
+void CabFree(Cab *cab) {
+    UnloadModel(cab->model);
 }
 
 /*
