@@ -52,7 +52,6 @@ struct InstanceMeshRenderData {
     Mesh mesh;
     Material material;
 };
-void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd);
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
@@ -71,7 +70,7 @@ struct ParticleSystem {
     v3 velocity;
     i32 count;
 };
-ParticleSystem ParticleSystemCreate(Texture texture);
+ParticleSystem ParticleSystemCreate(Texture texture, Material material);
 void ParticleSystemDestroy(ParticleSystem *psys);
 void ParticleSystemStep(ParticleSystem *psys);
 void ParticleSystemDraw(ParticleSystem *psys);
@@ -133,7 +132,7 @@ struct Heightmap {
     Model debugModel;
     u32 width;
 };
-Heightmap HeightmapCreate(HeightmapGenerationInfo info);
+Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
@@ -159,7 +158,6 @@ struct Cab {
     mat4 _rotmat;
 };
 void CabInit(Cab *cab);
-void CabFree(Cab *cab); // TODO: Use globally available resources
 void CabUpdate(Cab *cab, CabUpdateInfo *out);
 void CabDraw(Cab *cab);
 v3 CabGetFrontSeatPosition(Cab *cab);
@@ -289,15 +287,14 @@ i32 PixelformatGetStride(i32 format) {
 #define MatrixRotateYaw(rad) MatrixRotateY(rad)
 #define MatrixRotatePitch(rad) MatrixRotateZ(rad)
 
-namespace global {
-    Material litInstancedMaterial;
-    Material litMaterial;
-    Material unlitInstancedMaterial;
-    Material litTerrainMaterial;
-
-}
-
-void InitGlobals() {
+enum SHARED_MATERIALS {
+    SHARED_MATERIAL_UNLIT,
+    SHARED_MATERIAL_LIT,
+    SHARED_MATERIAL_LIT_INSTANCED,
+    SHARED_MATERIAL_LIT_TERRAIN,
+    SHARED_MATERIAL_COUNT
+};
+void InitSharedMaterials(Material* materials) {
     Shader sh;
     Material mat;
     
@@ -305,45 +302,123 @@ void InitGlobals() {
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    global::litInstancedMaterial = mat;
+    materials[SHARED_MATERIAL_LIT_INSTANCED] = mat;
 
     sh = LOAD_SHADER("light.vs", "light.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    global::litMaterial = mat;
+    materials[SHARED_MATERIAL_LIT] = mat;
 
     sh = LOAD_SHADER("unlitInstanced.vs", "passthrough.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    global::unlitInstancedMaterial = mat;
+    materials[SHARED_MATERIAL_UNLIT] = mat;
 
     sh = LOAD_SHADER("light.vs", "lightTerrain.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    global::litTerrainMaterial = mat;
+    materials[SHARED_MATERIAL_LIT_TERRAIN] = mat;
+}
+void UpdateGlobalMaterials(Material *materials, v3 lightPosition) {
+    float pos[3] = {lightPosition.x, lightPosition.y, lightPosition.z};
+    SetShaderValue(
+        materials[SHARED_MATERIAL_LIT_INSTANCED].shader,
+        GetShaderLocation(materials[SHARED_MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
+    SetShaderValue(
+        materials[SHARED_MATERIAL_LIT].shader,
+        GetShaderLocation(materials[SHARED_MATERIAL_LIT].shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
+    SetShaderValue(
+        materials[SHARED_MATERIAL_LIT_TERRAIN].shader,
+        GetShaderLocation(materials[SHARED_MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
+        (void*)pos,
+        SHADER_UNIFORM_VEC3);
 }
 
-void UpdateGlobalMaterials(v3 playerPosition) {
-    float pos[3] = {playerPosition.x, playerPosition.y, playerPosition.z};
-    SetShaderValue(
-        global::litInstancedMaterial.shader,
-        GetShaderLocation(global::litInstancedMaterial.shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
-    SetShaderValue(
-        global::litMaterial.shader,
-        GetShaderLocation(global::litMaterial.shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
-    SetShaderValue(
-        global::litTerrainMaterial.shader,
-        GetShaderLocation(global::litMaterial.shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
+enum GAME_MODELS {
+    GAME_MODEL_CAB,
+    GAME_MODEL_TREE,
+    GAME_MODEL_COUNT
+};
+static const char *gameModelPaths[GAME_MODEL_COUNT] = {
+    "cab.glb",
+    "tree.glb"
+};
+static Model gameModels[GAME_MODEL_COUNT];
+void LoadGameModels() {
+    for (i32 i = 0; i < GAME_MODEL_COUNT; i++) {
+        gameModels[i] = LOAD_MODEL(gameModelPaths[i]);
+    }
+}
+void UnloadGameModels() {
+    for (i32 i = 0; i < GAME_MODEL_COUNT; i++) {
+        UnloadModel(gameModels[i]);
+    }
+}
+
+enum GAME_TEXTURES {
+    GAME_TEXTURE_STAR,
+    GAME_TEXTURE_TERRAIN,
+    GAME_TEXTURE_TERRAINMAP_BLURRED,
+    GAME_TEXTURE_COUNT
+};
+static const char *gameTexturePaths[GAME_TEXTURE_COUNT] = {
+    "star.png",
+    "terrain.png",
+    "terrainmap_blurred.png"
+};
+static Texture2D gameTextures[GAME_TEXTURE_COUNT];
+void LoadGameTextures() {
+    for (i32 i = 0; i < GAME_TEXTURE_COUNT; i++) {
+        gameTextures[i] = LOAD_TEXTURE(gameTexturePaths[i]);
+    }
+}
+void UnloadGameTextures() {
+    for (i32 i = 0; i < GAME_TEXTURE_COUNT; i++) {
+        UnloadTexture(gameTextures[i]);
+    }
+}
+
+enum GAME_IMAGES {
+    GAME_IMAGE_SKYBOX,
+    GAME_IMAGE_HEIGHTMAP,
+    GAME_IMAGE_TERRAINMAP,
+    GAME_IMAGE_COUNT
+};
+static const char *gameImagePaths[GAME_IMAGE_COUNT] = {
+    "skybox.png",
+    "heightmap.png",
+    "terrainmap.png"
+};
+static Image gameImages[GAME_IMAGE_COUNT];
+void LoadGameImages() {
+    for (i32 i = 0; i < GAME_IMAGE_COUNT; i++) {
+        gameImages[i] = LOAD_IMAGE(gameImagePaths[i]);
+    }
+}
+void UnloadGameImages() {
+    for (i32 i = 0; i < GAME_IMAGE_COUNT; i++) {
+        UnloadImage(gameImages[i]);
+    }
+}
+
+void LoadGameResources() {
+    LoadGameModels();
+    LoadGameTextures();
+    LoadGameImages();
+}
+
+void UnloadGameResources() {
+    UnloadGameModels();
+    UnloadGameTextures();
+    UnloadGameImages();
 }
 
 int main() {
@@ -354,7 +429,10 @@ int main() {
     InitWindow(screenSize.x, screenSize.y, "Midnight Driver");
     SetTargetFPS(60);
     DisableCursor();
-    InitGlobals();
+
+    Material sharedMaterials[SHARED_MATERIAL_COUNT];
+    InitSharedMaterials(sharedMaterials);
+    LoadGameResources();
 
     Shader shader = LOAD_SHADER("lightInstanced.vs", "light.fs");
     shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
@@ -386,28 +464,27 @@ int main() {
         SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
     }
     skyboxModel.materials[0].shader = skyboxShader;
-    Image img = LOAD_IMAGE("skybox.png");
-    skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(img, CUBEMAP_LAYOUT_AUTO_DETECT);
-    UnloadImage(img);
+    skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        gameImages[GAME_IMAGE_SKYBOX],
+        CUBEMAP_LAYOUT_AUTO_DETECT);
 
     v3 terrainSize = {50.f, 8.f, 50.f};
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
     HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &LOAD_IMAGE("heightmap.png");
-    hgi.terrainMapTexture = &LOAD_TEXTURE("terrainmap_blurred.png");
-    hgi.terrainTexture = &LOAD_TEXTURE("terrain.png");
+    hgi.heightmapImage = &gameImages[GAME_IMAGE_HEIGHTMAP];
+    hgi.terrainMapTexture = &gameTextures[GAME_TEXTURE_TERRAINMAP_BLURRED];
+    hgi.terrainTexture = &gameTextures[GAME_TEXTURE_TERRAIN];
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
     hgi.resdiv = 2;
-    Heightmap terrainHeightmap = HeightmapCreate(hgi);
+    Heightmap terrainHeightmap = HeightmapCreate(hgi, sharedMaterials[SHARED_MATERIAL_LIT_TERRAIN]);
 
-    ParticleSystem psys = ParticleSystemCreate(LOAD_TEXTURE("star.png"));
+    ParticleSystem psys = ParticleSystemCreate(gameTextures[GAME_TEXTURE_STAR], sharedMaterials[SHARED_MATERIAL_UNLIT]);
     psys.velocity = {1.f, 0.f, 0.f};
 
-    Image terrainImage = LOAD_IMAGE("terrainmap.png");
-    Model treeModel = LOAD_MODEL("tree.glb");
+    Model treeModel = gameModels[GAME_MODEL_TREE];
     ForestGenerationInfo forestGenInfo = {};
     forestGenInfo.density = 0.6f;
     forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
@@ -423,10 +500,13 @@ int main() {
         TODO: Add 3 different tree models
         TODO: Add basic flora
     */
-    Material forestMaterial = global::litInstancedMaterial;
+    Material forestMaterial = sharedMaterials[SHARED_MATERIAL_LIT_INSTANCED];
     forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
-    InstanceMeshRenderData forestImrd = ForestCreate(terrainImage, forestGenInfo, treeModel.meshes[0], global::litInstancedMaterial);
-    UnloadImage(terrainImage);
+    InstanceMeshRenderData forestImrd = ForestCreate(
+        gameImages[GAME_IMAGE_TERRAINMAP],
+        forestGenInfo,
+        treeModel.meshes[0],
+        sharedMaterials[SHARED_MATERIAL_LIT_INSTANCED]);
 
     while (!WindowShouldClose()) {
         
@@ -450,12 +530,12 @@ int main() {
             CameraUpdateDebug(&debugCamera, debugCameraSpeed);
             usingCamera = &debugCamera;
         } else {
-            CabUpdate(&cab, &cabUpdateInfo);
+            CabUpdate(&cab, nullptr);
             CameraUpdate(&camera, CabGetFrontSeatPosition(&cab), {0.f, 0.f});
             usingCamera = &camera;
         }
 
-        UpdateGlobalMaterials(usingCamera->position);
+        UpdateGlobalMaterials(sharedMaterials, usingCamera->position);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -483,9 +563,8 @@ int main() {
         EndDrawing();
     }
 
-    CabFree(&cab);
+    UnloadGameResources();
     ParticleSystemDestroy(&psys);
-    InstanceMeshRenderDataDestroy(forestImrd);
 
     return(0);
 }
@@ -536,9 +615,9 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
     return imrd;
 }
 
-ParticleSystem ParticleSystemCreate(Texture texture) {
+ParticleSystem ParticleSystemCreate(Texture texture, Material material) {
     ParticleSystem psys = {};
-    psys._material = global::unlitInstancedMaterial;
+    psys._material = material;
     psys._material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
     psys._quad = GenMeshPlane(1.f, 1.f, 1.f, 1);
     psys._transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
@@ -639,7 +718,7 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
 }
 
 void CabInit(Cab *cab) {
-    cab->model = LOAD_MODEL("car.glb");
+    cab->model = gameModels[GAME_MODEL_CAB];
     cab->frontSeat = {-0.13f, 1.65f, -0.44f};
     cab->direction = {1.f, 0.f, 0.f};
     cab->maxVelocity = 0.4f;
@@ -693,9 +772,6 @@ void CabDraw(Cab *cab) {
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_rotmat;
-}
-void CabFree(Cab *cab) {
-    UnloadModel(cab->model);
 }
 
 /*
@@ -796,7 +872,7 @@ v3 GetCameraRightNorm(Camera *camera) {
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
 
-Heightmap HeightmapCreate(HeightmapGenerationInfo info) {
+Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material) {
     const u32 resdiv = info.resdiv;
     const Image *image = info.heightmapImage;
     const u32 stride = PixelformatGetStride(image->format);
@@ -825,7 +901,7 @@ Heightmap HeightmapCreate(HeightmapGenerationInfo info) {
     heightmap.size = info.size;
     heightmap.texture = *info.terrainMapTexture;
     heightmap.model = LoadModelFromMesh(hmMesh);
-    heightmap.model.materials[0] = global::litTerrainMaterial;
+    heightmap.model.materials[0] = material;
     heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
     heightmap.model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
     heightmap.position = info.position;
