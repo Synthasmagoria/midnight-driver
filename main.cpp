@@ -22,6 +22,7 @@ typedef Vector2 v2;
 #define FRAMERATE 60
 #define TAU PI * 2.f
 
+struct Input;
 struct ForestGenerationInfo;
 struct InstanceMeshRenderData;
 struct QuadraticBezier;
@@ -33,6 +34,29 @@ struct List;
 struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
+
+enum INPUT {
+    INPUT_ACCELERATE,
+    INPUT_BREAK,
+    INPUT_TOGGLE_DEBUG,
+    INPUT_LEFT,
+    INPUT_RIGHT,
+    INPUT_DEBUG_LEFT,
+    INPUT_DEBUG_RIGHT,
+    INPUT_DEBUG_FORWARD,
+    INPUT_DEBUG_BACKWARD,
+    INPUT_DEBUG_UP,
+    INPUT_DEBUG_DOWN,
+    INPUT_COUNT
+};
+struct Input {
+    i32 map[INPUT_COUNT];
+    i32 pressed[INPUT_COUNT];
+    i32 down[INPUT_COUNT];
+    i32 up[INPUT_COUNT];
+};
+void InputInit(Input *input);
+void InputUpdate(Input *input);
 
 struct ForestGenerationInfo {
     v2 worldPosition;
@@ -295,14 +319,14 @@ namespace global {
         SHADER_SKYBOX,
         SHADER_COUNT
     };
-    static const char *shaderPaths[SHADER_COUNT * 2] = {
+    const char *shaderPaths[SHADER_COUNT * 2] = {
         "unlitInstanced.vs", "passthrough.fs",
         "light.vs", "light.fs",
         "lightInstanced.vs", "light.fs",
         "light.vs", "lightTerrain.fs",
         "skybox.vs", "skybox.fs"
     };
-    static Shader shaders[SHADER_COUNT];
+    Shader shaders[SHADER_COUNT];
 
     enum GAME_MATERIALS {
         MATERIAL_UNLIT,
@@ -317,11 +341,11 @@ namespace global {
         MODEL_TREE,
         MODEL_COUNT
     };
-    static const char *modelPaths[MODEL_COUNT] = {
+    const char *modelPaths[MODEL_COUNT] = {
         "cab.glb",
         "tree.glb"
     };
-    static Model models[MODEL_COUNT];
+    Model models[MODEL_COUNT];
 
     enum GAME_TEXTURES {
         TEXTURE_STAR,
@@ -329,12 +353,12 @@ namespace global {
         TEXTURE_TERRAINMAP_BLURRED,
         TEXTURE_COUNT
     };
-    static const char *texturePaths[global::TEXTURE_COUNT] = {
+    const char *texturePaths[global::TEXTURE_COUNT] = {
         "star.png",
         "terrain.png",
         "terrainmap_blurred.png"
     };
-    static Texture2D textures[global::TEXTURE_COUNT];
+    Texture2D textures[global::TEXTURE_COUNT];
 
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
@@ -342,12 +366,14 @@ namespace global {
         IMAGE_TERRAINMAP,
         IMAGE_COUNT
     };
-    static const char *imagePaths[IMAGE_COUNT] = {
+    const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
         "heightmap.png",
         "terrainmap.png"
     };
-    static Image images[IMAGE_COUNT];
+    Image images[IMAGE_COUNT];
+
+    Input input;
 }
 
 void LoadGameShaders() {
@@ -466,6 +492,7 @@ int main() {
 
     Material sharedMaterials[global::MATERIAL_COUNT];
     LoadGameResources();
+    InputInit(&global::input);
     InitSharedMaterials(sharedMaterials);
 
     Camera camera = {};
@@ -539,9 +566,9 @@ int main() {
         sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
 
     while (!WindowShouldClose()) {
-        
+        InputUpdate(&global::input);
 
-        if (IsKeyPressed(KEY_BACKSPACE)) {
+        if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
             freecam = freecam ? 0 : 1;
             if (freecam) {
                 debugCamera.position = camera.position;
@@ -551,7 +578,6 @@ int main() {
                 debugCamera.up = {0.f, 1.f, 0.f};
             }
         }
-        
 
         v2 mouseScroll = GetMouseWheelMoveV();
         debugCameraSpeed = fclampf(debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
@@ -594,6 +620,27 @@ int main() {
     ParticleSystemDestroy(&psys);
 
     return(0);
+}
+
+void InputInit(Input *input) {
+    input->map[INPUT_ACCELERATE] = KEY_SPACE;
+    input->map[INPUT_BREAK] = KEY_LEFT_SHIFT;
+    input->map[INPUT_LEFT] = KEY_LEFT;
+    input->map[INPUT_RIGHT] = KEY_RIGHT;
+    input->map[INPUT_TOGGLE_DEBUG] = KEY_BACKSPACE;
+    input->map[INPUT_DEBUG_LEFT] = KEY_A;
+    input->map[INPUT_DEBUG_RIGHT] = KEY_D;
+    input->map[INPUT_DEBUG_FORWARD] = KEY_W;
+    input->map[INPUT_DEBUG_BACKWARD] = KEY_S;
+    input->map[INPUT_DEBUG_UP] = KEY_Q;
+    input->map[INPUT_DEBUG_DOWN] = KEY_E;
+}
+void InputUpdate(Input *input) {
+    for (i32 i = 0; i < INPUT_COUNT; i++) {
+        input->pressed[i] = IsKeyPressed(input->map[i]);
+        input->down[i] = IsKeyDown(input->map[i]);
+        input->up[i] = IsKeyUp(input->map[i]);
+    }
 }
 
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
@@ -759,8 +806,8 @@ void CabInit(Cab *cab) {
     cab->_transform = MatrixIdentity();
 }
 void CabUpdate(Cab *cab) {
-    bool inputAccelerate = IsKeyDown(KEY_SPACE);
-    bool inputBreak = IsKeyDown(KEY_LEFT_SHIFT);
+    bool inputAccelerate = global::input.down[INPUT_ACCELERATE];
+    bool inputBreak = global::input.down[INPUT_BREAK];
     if (inputAccelerate && inputBreak) {
         // TODO: drift
     } else if (inputAccelerate) {
@@ -781,7 +828,7 @@ void CabUpdate(Cab *cab) {
         stepSpeed = QuadraticBezierLerp(cab->reverseAccelerationCurve, fabsf(cab->_speed)) * cab->maxVelocity;
     }
 
-    float inputTurn = ((float)IsKeyDown(KEY_D) - (float)IsKeyDown(KEY_A)) * -1.f;
+    float inputTurn = ((float)global::input.down[INPUT_RIGHT] - (float)global::input.down[INPUT_LEFT]) * -1.f;
     float turnAmountStep = inputTurn * FRAME_TIME * cab->turnAngleSpeed;
     cab->_turnAngle = fclampf(cab->_turnAngle + turnAmountStep, -cab->turnAngleMax, cab->turnAngleMax);
     cab->yawRotationStep = cab->_turnAngle * DEG2RAD * stepSpeed;
@@ -803,61 +850,6 @@ v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
 }
 
-/*
-void CabUpdate(Cab *cab, float *rotationStepOut, Heightmap* heightmap) {
-    cab->speed = fmaxf(cab->speed - cab->friction, 0.f);
-    if (IsKeyDown(KEY_SPACE)) {
-        cab->speed = fminf(cab->speed + cab->acceleration, cab->maxSpeed);
-    } else if (IsKeyDown(KEY_LEFT_SHIFT)) {
-        if (cab->speed >= 0.f) {
-            cab->speed -= cab->breakDeceleration;
-        } else {
-            cab->speed = fmaxf(cab->speed - cab->reverseAcceleration, cab->maxReverseSpeed);
-        }
-    }
-
-    float turnStep = ((float)IsKeyDown(KEY_LEFT) - (float)IsKeyDown(KEY_RIGHT)) * cab->turnSpeed;
-    cab->turn = fclampf(cab->turn + turnStep, -cab->turnRadius, cab->turnRadius);
-    float rotationStep = cab->turn * cab->speed;
-    cab->rotation.x += rotationStep;
-    if (cab->rotation.x < 0.f) {
-        cab->rotation.x += 360.f;
-    } else if (cab->rotation.x >= 360.f) {
-        cab->rotation.x -= 360.f;
-    }
-    *rotationStepOut = rotationStep;
-
-    float cabRotCos = cosf((360.f - cab->rotation.x) * DEG2RAD);
-    float cabRotSin = sinf((360.f - cab->rotation.x) * DEG2RAD);
-    mat4 cabRotationMatrix = {
-        cabRotCos, 0.f, -cabRotSin, 0.f,
-        0.f, 1.f,  0.f, 0.f,
-        cabRotSin, 0.f, cabRotCos, 0.f,
-        0.f, 0.f, 0.f, 1.f};
-    v3 cabDirection = Vector3Transform({1.f, 0.f, 0.f}, cabRotationMatrix);
-    v3 cabMoveStep = Vector3Scale(cabDirection, cab->speed);
-    cab->position = cab->position + cabMoveStep;
-
-    v3 flTire = cab->position + cab->frontLeftTire * cabRotationMatrix;
-    v3 frTire = cab->position + cab->frontRightTire * cabRotationMatrix;
-    v3 frontPoint = Vector3Lerp(flTire, frTire, 0.5f);
-    frontPoint.y = heightmap ? HeightmapSampleHeight(*heightmap, frontPoint.x, frontPoint.z) : 0.f;
-
-    v3 blTire = cab->position + cab->backLeftTire * cabRotationMatrix;
-    v3 brTire = cab->position + cab->backRightTire * cabRotationMatrix;
-    v3 backPoint = Vector3Lerp(blTire, brTire, 0.5f);
-    backPoint.y = heightmap ? HeightmapSampleHeight(*heightmap, backPoint.x, backPoint.z) : 0.f;
-
-    cab->position.y = Lerp(frontPoint.y, backPoint.y, 0.5f);
-    if (backPoint.y != 0.f || frontPoint.y != 0.f) {
-        float tireHorSep = cab->frontLeftTire.x - cab->backLeftTire.x;
-        v2 pitchNormal = (Vector2Normalize(v2{cab->frontLeftTire.x, frontPoint.y} - v2{cab->backLeftTire.x, backPoint.y}));
-        cab->rotation.y = atan2(pitchNormal.y, pitchNormal.x) * RAD2DEG;
-    } else {
-        cab->rotation.y = 0.f;
-    }
-}*/
-
 void CameraUpdateDebug(Camera *camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
     float sensitivity = 0.002f;
@@ -865,9 +857,9 @@ void CameraUpdateDebug(Camera *camera, float speed) {
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraUpNorm(camera), -mouseDelta.x * sensitivity);
     targetDirection = Vector3RotateByAxisAngle(targetDirection, GetCameraRightNorm(camera), -mouseDelta.y * sensitivity);
     v3 input = {
-        (float)IsKeyDown(KEY_W) - (float)IsKeyDown(KEY_S),
-        (float)IsKeyDown(KEY_Q) - (float)IsKeyDown(KEY_E),
-        (float)IsKeyDown(KEY_D) - (float)IsKeyDown(KEY_A)};
+        (float)global::input.down[INPUT_DEBUG_FORWARD] - (float)global::input.down[INPUT_DEBUG_BACKWARD],
+        (float)global::input.down[INPUT_DEBUG_UP] - (float)global::input.down[INPUT_DEBUG_DOWN],
+        (float)global::input.down[INPUT_DEBUG_RIGHT] - (float)global::input.down[INPUT_DEBUG_LEFT]};
     v2 hInput = {input.x, input.z};
     if (Vector2LengthSqr(hInput) > 0.f) {
         v2 hInputNorm = Vector2Normalize(hInput);
