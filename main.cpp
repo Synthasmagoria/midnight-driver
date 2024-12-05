@@ -136,34 +136,33 @@ Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
 void HeightmapDestroy(Heightmap heightmap);
 
-struct CabUpdateInfo {
-    v3 distanceTraveled;
-};
 struct Cab {
     Model model;
     v3 position;
     v3 frontSeat;
     v3 direction;
     v3 velocity;
-    float speed;
     float maxVelocity;
     float acceleration;
     float neutralDeceleration;
     float breakDeceleration;
-    float turnDegrees;
-    float turnRadius;
-    float turnSpeed;
+    float turnAngleMax;
+    float turnAngleSpeed;
+    float yawRotationStep;
     QuadraticBezier accelerationCurve;
     QuadraticBezier reverseAccelerationCurve;
-    mat4 _rotmat;
+
+    float _speed;
+    mat4 _transform;
+    float _turnAngle;
 };
 void CabInit(Cab *cab);
-void CabUpdate(Cab *cab, CabUpdateInfo *out);
+void CabUpdate(Cab *cab);
 void CabDraw(Cab *cab);
 v3 CabGetFrontSeatPosition(Cab *cab);
 
 void CameraUpdateDebug(Camera *camera, float speed);
-void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd);
+void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle);
 v3 GetCameraForwardNorm(Camera *camera);
 v3 GetCameraUpNorm(Camera *camera);
 v3 GetCameraRightNorm(Camera *camera);
@@ -287,13 +286,81 @@ i32 PixelformatGetStride(i32 format) {
 #define MatrixRotateYaw(rad) MatrixRotateY(rad)
 #define MatrixRotatePitch(rad) MatrixRotateZ(rad)
 
-enum SHARED_MATERIALS {
-    SHARED_MATERIAL_UNLIT,
-    SHARED_MATERIAL_LIT,
-    SHARED_MATERIAL_LIT_INSTANCED,
-    SHARED_MATERIAL_LIT_TERRAIN,
-    SHARED_MATERIAL_COUNT
-};
+namespace global {
+    enum GAME_SHADERS {
+        SHADER_UNLIT_INSTANCED,
+        SHADER_LIT,
+        SHADER_LIT_INSTANCED,
+        SHADER_LIT_TERRAIN,
+        SHADER_SKYBOX,
+        SHADER_COUNT
+    };
+    static const char *shaderPaths[SHADER_COUNT * 2] = {
+        "unlitInstanced.vs", "passthrough.fs",
+        "light.vs", "light.fs",
+        "lightInstanced.vs", "light.fs",
+        "light.vs", "lightTerrain.fs",
+        "skybox.vs", "skybox.fs"
+    };
+    static Shader shaders[SHADER_COUNT];
+
+    enum GAME_MATERIALS {
+        MATERIAL_UNLIT,
+        MATERIAL_LIT,
+        MATERIAL_LIT_INSTANCED,
+        MATERIAL_LIT_TERRAIN,
+        MATERIAL_COUNT
+    };
+
+    enum GAME_MODELS {
+        MODEL_CAB,
+        MODEL_TREE,
+        MODEL_COUNT
+    };
+    static const char *modelPaths[MODEL_COUNT] = {
+        "cab.glb",
+        "tree.glb"
+    };
+    static Model models[MODEL_COUNT];
+
+    enum GAME_TEXTURES {
+        TEXTURE_STAR,
+        TEXTURE_TERRAIN,
+        TEXTURE_TERRAINMAP_BLURRED,
+        TEXTURE_COUNT
+    };
+    static const char *texturePaths[global::TEXTURE_COUNT] = {
+        "star.png",
+        "terrain.png",
+        "terrainmap_blurred.png"
+    };
+    static Texture2D textures[global::TEXTURE_COUNT];
+
+    enum GAME_IMAGES {
+        IMAGE_SKYBOX,
+        IMAGE_HEIGHTMAP,
+        IMAGE_TERRAINMAP,
+        IMAGE_COUNT
+    };
+    static const char *imagePaths[IMAGE_COUNT] = {
+        "skybox.png",
+        "heightmap.png",
+        "terrainmap.png"
+    };
+    static Image images[IMAGE_COUNT];
+}
+
+void LoadGameShaders() {
+    for (i32 i = 0; i < global::SHADER_COUNT; i++) {
+        global::shaders[i] = LOAD_SHADER(global::shaderPaths[i*2], global::shaderPaths[i*2+1]);
+    }
+}
+void UnloadGameShaders() {
+    for (i32 i = 0; i < global::SHADER_COUNT; i++) {
+        UnloadShader(global::shaders[i]);
+    }
+}
+
 void InitSharedMaterials(Material* materials) {
     Shader sh;
     Material mat;
@@ -302,120 +369,87 @@ void InitSharedMaterials(Material* materials) {
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[SHARED_MATERIAL_LIT_INSTANCED] = mat;
+    materials[global::MATERIAL_LIT_INSTANCED] = mat;
 
     sh = LOAD_SHADER("light.vs", "light.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[SHARED_MATERIAL_LIT] = mat;
+    materials[global::MATERIAL_LIT] = mat;
 
     sh = LOAD_SHADER("unlitInstanced.vs", "passthrough.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[SHARED_MATERIAL_UNLIT] = mat;
+    materials[global::MATERIAL_UNLIT] = mat;
 
     sh = LOAD_SHADER("light.vs", "lightTerrain.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[SHARED_MATERIAL_LIT_TERRAIN] = mat;
+    materials[global::MATERIAL_LIT_TERRAIN] = mat;
 }
 void UpdateGlobalMaterials(Material *materials, v3 lightPosition) {
     float pos[3] = {lightPosition.x, lightPosition.y, lightPosition.z};
     SetShaderValue(
-        materials[SHARED_MATERIAL_LIT_INSTANCED].shader,
-        GetShaderLocation(materials[SHARED_MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
+        materials[global::MATERIAL_LIT_INSTANCED].shader,
+        GetShaderLocation(materials[global::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
     SetShaderValue(
-        materials[SHARED_MATERIAL_LIT].shader,
-        GetShaderLocation(materials[SHARED_MATERIAL_LIT].shader, "lightPosition"),
+        materials[global::MATERIAL_LIT].shader,
+        GetShaderLocation(materials[global::MATERIAL_LIT].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
     SetShaderValue(
-        materials[SHARED_MATERIAL_LIT_TERRAIN].shader,
-        GetShaderLocation(materials[SHARED_MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
+        materials[global::MATERIAL_LIT_TERRAIN].shader,
+        GetShaderLocation(materials[global::MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
 }
 
-enum GAME_MODELS {
-    GAME_MODEL_CAB,
-    GAME_MODEL_TREE,
-    GAME_MODEL_COUNT
-};
-static const char *gameModelPaths[GAME_MODEL_COUNT] = {
-    "cab.glb",
-    "tree.glb"
-};
-static Model gameModels[GAME_MODEL_COUNT];
 void LoadGameModels() {
-    for (i32 i = 0; i < GAME_MODEL_COUNT; i++) {
-        gameModels[i] = LOAD_MODEL(gameModelPaths[i]);
+    for (i32 i = 0; i < global::MODEL_COUNT; i++) {
+        global::models[i] = LOAD_MODEL(global::modelPaths[i]);
     }
 }
 void UnloadGameModels() {
-    for (i32 i = 0; i < GAME_MODEL_COUNT; i++) {
-        UnloadModel(gameModels[i]);
+    for (i32 i = 0; i < global::MODEL_COUNT; i++) {
+        UnloadModel(global::models[i]);
     }
 }
 
-enum GAME_TEXTURES {
-    GAME_TEXTURE_STAR,
-    GAME_TEXTURE_TERRAIN,
-    GAME_TEXTURE_TERRAINMAP_BLURRED,
-    GAME_TEXTURE_COUNT
-};
-static const char *gameTexturePaths[GAME_TEXTURE_COUNT] = {
-    "star.png",
-    "terrain.png",
-    "terrainmap_blurred.png"
-};
-static Texture2D gameTextures[GAME_TEXTURE_COUNT];
 void LoadGameTextures() {
-    for (i32 i = 0; i < GAME_TEXTURE_COUNT; i++) {
-        gameTextures[i] = LOAD_TEXTURE(gameTexturePaths[i]);
+    for (i32 i = 0; i < global::TEXTURE_COUNT; i++) {
+        global::textures[i] = LOAD_TEXTURE(global::texturePaths[i]);
     }
 }
 void UnloadGameTextures() {
-    for (i32 i = 0; i < GAME_TEXTURE_COUNT; i++) {
-        UnloadTexture(gameTextures[i]);
+    for (i32 i = 0; i < global::TEXTURE_COUNT; i++) {
+        UnloadTexture(global::textures[i]);
     }
 }
 
-enum GAME_IMAGES {
-    GAME_IMAGE_SKYBOX,
-    GAME_IMAGE_HEIGHTMAP,
-    GAME_IMAGE_TERRAINMAP,
-    GAME_IMAGE_COUNT
-};
-static const char *gameImagePaths[GAME_IMAGE_COUNT] = {
-    "skybox.png",
-    "heightmap.png",
-    "terrainmap.png"
-};
-static Image gameImages[GAME_IMAGE_COUNT];
 void LoadGameImages() {
-    for (i32 i = 0; i < GAME_IMAGE_COUNT; i++) {
-        gameImages[i] = LOAD_IMAGE(gameImagePaths[i]);
+    for (i32 i = 0; i < global::IMAGE_COUNT; i++) {
+        global::images[i] = LOAD_IMAGE(global::imagePaths[i]);
     }
 }
 void UnloadGameImages() {
-    for (i32 i = 0; i < GAME_IMAGE_COUNT; i++) {
-        UnloadImage(gameImages[i]);
+    for (i32 i = 0; i < global::IMAGE_COUNT; i++) {
+        UnloadImage(global::images[i]);
     }
 }
 
 void LoadGameResources() {
+    LoadGameShaders();
     LoadGameModels();
     LoadGameTextures();
     LoadGameImages();
 }
-
 void UnloadGameResources() {
+    UnloadGameShaders();
     UnloadGameModels();
     UnloadGameTextures();
     UnloadGameImages();
@@ -430,13 +464,9 @@ int main() {
     SetTargetFPS(60);
     DisableCursor();
 
-    Material sharedMaterials[SHARED_MATERIAL_COUNT];
-    InitSharedMaterials(sharedMaterials);
+    Material sharedMaterials[global::MATERIAL_COUNT];
     LoadGameResources();
-
-    Shader shader = LOAD_SHADER("lightInstanced.vs", "light.fs");
-    shader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(shader, "mvp");
-    shader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(shader, "instanceTransform");
+    InitSharedMaterials(sharedMaterials);
 
     Camera camera = {};
     camera.fovy = 60.f;
@@ -454,7 +484,7 @@ int main() {
     float debugCameraSpeed = 0.1f;
 
     Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    Shader skyboxShader = LOAD_SHADER("skybox.vs", "skybox.fs");
+    Shader skyboxShader = global::shaders[global::SHADER_SKYBOX];
     {
         i32 envmapValue = MATERIAL_MAP_CUBEMAP;
         SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
@@ -465,7 +495,7 @@ int main() {
     }
     skyboxModel.materials[0].shader = skyboxShader;
     skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        gameImages[GAME_IMAGE_SKYBOX],
+        global::images[global::IMAGE_SKYBOX],
         CUBEMAP_LAYOUT_AUTO_DETECT);
 
     v3 terrainSize = {50.f, 8.f, 50.f};
@@ -473,18 +503,18 @@ int main() {
     terrainPosition.y = 0.f;
 
     HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &gameImages[GAME_IMAGE_HEIGHTMAP];
-    hgi.terrainMapTexture = &gameTextures[GAME_TEXTURE_TERRAINMAP_BLURRED];
-    hgi.terrainTexture = &gameTextures[GAME_TEXTURE_TERRAIN];
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
+    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
+    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
     hgi.resdiv = 2;
-    Heightmap terrainHeightmap = HeightmapCreate(hgi, sharedMaterials[SHARED_MATERIAL_LIT_TERRAIN]);
+    Heightmap terrainHeightmap = HeightmapCreate(hgi, sharedMaterials[global::MATERIAL_LIT_TERRAIN]);
 
-    ParticleSystem psys = ParticleSystemCreate(gameTextures[GAME_TEXTURE_STAR], sharedMaterials[SHARED_MATERIAL_UNLIT]);
+    ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], sharedMaterials[global::MATERIAL_UNLIT]);
     psys.velocity = {1.f, 0.f, 0.f};
 
-    Model treeModel = gameModels[GAME_MODEL_TREE];
+    Model treeModel = global::models[global::MODEL_TREE];
     ForestGenerationInfo forestGenInfo = {};
     forestGenInfo.density = 0.6f;
     forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
@@ -500,13 +530,13 @@ int main() {
         TODO: Add 3 different tree models
         TODO: Add basic flora
     */
-    Material forestMaterial = sharedMaterials[SHARED_MATERIAL_LIT_INSTANCED];
+    Material forestMaterial = sharedMaterials[global::MATERIAL_LIT_INSTANCED];
     forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
     InstanceMeshRenderData forestImrd = ForestCreate(
-        gameImages[GAME_IMAGE_TERRAINMAP],
+        global::images[global::IMAGE_TERRAINMAP],
         forestGenInfo,
         treeModel.meshes[0],
-        sharedMaterials[SHARED_MATERIAL_LIT_INSTANCED]);
+        sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
 
     while (!WindowShouldClose()) {
         
@@ -530,8 +560,8 @@ int main() {
             CameraUpdateDebug(&debugCamera, debugCameraSpeed);
             usingCamera = &debugCamera;
         } else {
-            CabUpdate(&cab, nullptr);
-            CameraUpdate(&camera, CabGetFrontSeatPosition(&cab), {0.f, 0.f});
+            CabUpdate(&cab);
+            CameraUpdate(&camera, CabGetFrontSeatPosition(&cab), {cab.yawRotationStep, 0.f}, cab.direction);
             usingCamera = &camera;
         }
 
@@ -546,9 +576,6 @@ int main() {
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
             DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
-            DrawMeshInstanced(treeModel.meshes[1], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
-            DrawMeshInstanced(treeModel.meshes[2], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
-            DrawMeshInstanced(treeModel.meshes[3], forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
             ParticleSystemStep(&psys);
@@ -596,8 +623,8 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
             Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
             if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
                 v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
-                transforms[treeCount] = MatrixRotateY(GetRandomValueF(0.f, PI));
-                transforms[treeCount] *= MatrixRotateZ(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
+                transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
+                transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
                 transforms[treeCount] *= MatrixTranslate(
                     treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
                     GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(*info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
@@ -718,60 +745,62 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
 }
 
 void CabInit(Cab *cab) {
-    cab->model = gameModels[GAME_MODEL_CAB];
+    cab->model = global::models[global::MODEL_CAB];
     cab->frontSeat = {-0.13f, 1.65f, -0.44f};
     cab->direction = {1.f, 0.f, 0.f};
     cab->maxVelocity = 0.4f;
     cab->acceleration = 0.01f;
     cab->neutralDeceleration = 0.004f;
     cab->breakDeceleration = 0.015f;
-    cab->turnRadius = 24.f;
-    cab->turnSpeed = 30.f;
+    cab->turnAngleMax = 24.f;
+    cab->turnAngleSpeed = 64.f;
     cab->accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
     cab->reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
-    cab->_rotmat = MatrixIdentity();
+    cab->_transform = MatrixIdentity();
 }
-void CabUpdate(Cab *cab, CabUpdateInfo *out) {
+void CabUpdate(Cab *cab) {
     bool inputAccelerate = IsKeyDown(KEY_SPACE);
     bool inputBreak = IsKeyDown(KEY_LEFT_SHIFT);
     if (inputAccelerate && inputBreak) {
         // TODO: drift
     } else if (inputAccelerate) {
-        cab->speed += cab->acceleration;
+        cab->_speed += cab->acceleration;
     } else if (inputBreak) {
-        cab->speed -= cab->breakDeceleration;
+        cab->_speed -= cab->breakDeceleration;
     } else {
-        float absSpeed = fabsf(cab->speed);
-        float speedSign = fsignf(cab->speed);
-        cab->speed = fmaxf(absSpeed - cab->neutralDeceleration, 0.f) * speedSign;
+        float absSpeed = fabsf(cab->_speed);
+        float speedSign = fsignf(cab->_speed);
+        cab->_speed = fmaxf(absSpeed - cab->neutralDeceleration, 0.f) * speedSign;
     }
-    cab->speed = fclampf(cab->speed, -1.f, 1.f);
+    cab->_speed = fclampf(cab->_speed, -1.f, 1.f);
 
     float stepSpeed = 0.f;
-    if (cab->speed > 0.f) {
-        stepSpeed = QuadraticBezierLerp(cab->accelerationCurve, cab->speed);
-    } else if (cab->speed < 0.f) {
-        stepSpeed = QuadraticBezierLerp(cab->reverseAccelerationCurve, fabsf(cab->speed));
+    if (cab->_speed > 0.f) {
+        stepSpeed = QuadraticBezierLerp(cab->accelerationCurve, cab->_speed) * cab->maxVelocity;
+    } else if (cab->_speed < 0.f) {
+        stepSpeed = QuadraticBezierLerp(cab->reverseAccelerationCurve, fabsf(cab->_speed)) * cab->maxVelocity;
     }
 
-    float inputTurn = (float)IsKeyDown(KEY_D) - (float)(IsKeyDown(KEY_A));
-    float turnAmountStep = inputTurn * FRAME_TIME * cab->turnSpeed;
-    cab->turnDegrees = fclampf(cab->turnDegrees + turnAmountStep, -cab->turnRadius, cab->turnRadius);
-    cab->_rotmat = cab->_rotmat * MatrixRotateYaw(DEG2RAD * cab->turnDegrees * stepSpeed * cab->maxVelocity);
-    // TODO: Inefficient matrix multiplication
-    cab->direction = cab->direction * cab->_rotmat;
+    float inputTurn = ((float)IsKeyDown(KEY_D) - (float)IsKeyDown(KEY_A)) * -1.f;
+    float turnAmountStep = inputTurn * FRAME_TIME * cab->turnAngleSpeed;
+    cab->_turnAngle = fclampf(cab->_turnAngle + turnAmountStep, -cab->turnAngleMax, cab->turnAngleMax);
+    cab->yawRotationStep = cab->_turnAngle * DEG2RAD * stepSpeed;
+    mat4 yawRotationMatrix = MatrixRotateYaw(cab->yawRotationStep);
+    cab->_transform *= yawRotationMatrix;
 
-    cab->velocity = cab->direction * stepSpeed * cab->maxVelocity;
+    // TODO: Inefficient matrix multiplication
+    cab->direction = cab->direction * yawRotationMatrix;
+    cab->velocity = cab->direction * stepSpeed;
     cab->position += cab->velocity;
 }
 void CabDraw(Cab *cab) {
-    mat4 transform = cab->_rotmat * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
+    mat4 transform = cab->_transform * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
     for (i32 i = 0; i < cab->model.meshCount; i++) {
         DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], transform);
     }
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
-    return cab->position + cab->frontSeat * cab->_rotmat;
+    return cab->position + cab->frontSeat * cab->_transform;
 }
 
 /*
@@ -850,13 +879,17 @@ void CameraUpdateDebug(Camera *camera, float speed) {
     camera->target = camera->position + targetDirection;
 }
 
-void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd) {
+void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     v3 target = Vector3Normalize(camera->target - camera->position);
     v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
     v2 mouseRotationStep = GetMouseDelta() * FRAME_TIME * -0.05f;
-    v2 eulerNext = v2clampv2(euler + mouseRotationStep, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
+    v2 eulerNext = v2clampv2(euler + mouseRotationStep + rotationAdd, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
     v2 eulerDiff = eulerNext - euler;
-    mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y); // TODO: Rename this to MatrixRotateYaw
+    mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y);
+    v3 rotatedTarget = target * rot;
+    float yawMiddleDifference = Vector2DotProduct({viewMiddle.x, viewMiddle.z}, {rotatedTarget.x, rotatedTarget.z});
+    float pitchMiddleDifference = Vector2DotProduct({viewMiddle.x, viewMiddle.y}, {rotatedTarget.x, rotatedTarget.y});
+    
     camera->position = position;
     camera->target = camera->position + target * rot;
 }
