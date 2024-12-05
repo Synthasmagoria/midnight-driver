@@ -9,8 +9,6 @@ uniform mat4 mvp;
 out vec2 fragTexCoord;
 out vec3 fragPosition;
 
-#define LIGHT_FALLOFF_DISTANCE 18.0
-
 void main() {
     fragPosition = vec3(instanceTransform * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;

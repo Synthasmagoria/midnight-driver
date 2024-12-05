@@ -18,7 +18,7 @@ out vec4 finalColor;
 void main() {
     // TODO: Add some sort of ambient light color
     vec4 terrain = texture(TERRAIN_MAP, fragTexCoord);
-    vec2 uv = fract(fragTexCoord * 8.0);
+    vec2 uv = fract(fragTexCoord * 80.0);
     vec2 uv_gravel = vec2(uv.x * 0.5 + 0.5, uv.y);
     vec2 uv_forest = vec2(uv.x * 0.5, uv.y);
     vec4 gravel = texture(TERRAIN_TEXTURE, uv_gravel);

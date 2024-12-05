@@ -11,7 +11,7 @@ out vec2 fragTexCoord;
 out vec3 fragPosition;
 out float fragLight;
 
-#define LIGHT_FALLOFF_DISTANCE 18.0
+#define LIGHT_FALLOFF_DISTANCE 20.0
 
 void main() {
     fragTexCoord = vertexTexCoord;

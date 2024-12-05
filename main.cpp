@@ -5,6 +5,9 @@
 #include "stdio.h"
 #include "rlgl.h"
 
+#include <unordered_map>
+#include <string>
+
 typedef uint8_t byte;
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -35,6 +38,8 @@ struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
 
+void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
+
 enum INPUT {
     INPUT_ACCELERATE,
     INPUT_BREAK,
@@ -58,6 +63,7 @@ struct Input {
 void InputInit(Input *input);
 void InputUpdate(Input *input);
 
+// TODO: Removed deprecated
 struct ForestGenerationInfo {
     v2 worldPosition;
     v2 worldSize;
@@ -68,9 +74,25 @@ struct ForestGenerationInfo {
     float randomTiltDegrees;
     Heightmap* heightmap;
 };
-
+struct ForestGenerationInfoBlocks {
+    v2 worldPosition;
+    v2 worldSize;
+    float density;
+    float treeChance;
+    float randomPositionOffset;
+    float randomYDip;
+    float randomTiltDegrees;
+    Heightmap* heightmap;
+};
 struct InstanceMeshRenderData {
-    mat4 *transforms;
+    float16 *transforms;
+    u32 instanceCount;
+    Model _model;
+    Mesh mesh;
+    Material material;
+};
+struct InstanceMeshRenderDataBlocks {
+    float16 *transforms;
     u32 instanceCount;
     Model _model;
     Mesh mesh;
@@ -172,6 +194,7 @@ struct Cab {
     float breakDeceleration;
     float turnAngleMax;
     float turnAngleSpeed;
+    float turnNeutralReturn;
     float yawRotationStep;
     QuadraticBezier accelerationCurve;
     QuadraticBezier reverseAccelerationCurve;
@@ -219,6 +242,9 @@ inline float fsignf(float val) {
 }
 inline v2 v2clampv2(v2 val, v2 min, v2 max) {
     return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
+}
+inline float ApproachZero(float val, float amount) {
+    return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);
 }
 // NOTE: only supports up to 3 decimals
 inline float GetRandomValueF(float min, float max) {
@@ -356,7 +382,7 @@ namespace global {
     const char *texturePaths[global::TEXTURE_COUNT] = {
         "star.png",
         "terrain.png",
-        "terrainmap_blurred.png"
+        "terrainmap2.png"
     };
     Texture2D textures[global::TEXTURE_COUNT];
 
@@ -368,12 +394,14 @@ namespace global {
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
-        "heightmap.png",
-        "terrainmap.png"
+        "heightmap2.png",
+        "terrainmap2.png"
     };
     Image images[IMAGE_COUNT];
 
     Input input;
+
+    std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
 }
 
 void LoadGameShaders() {
@@ -525,7 +553,7 @@ int main() {
         global::images[global::IMAGE_SKYBOX],
         CUBEMAP_LAYOUT_AUTO_DETECT);
 
-    v3 terrainSize = {50.f, 8.f, 50.f};
+    v3 terrainSize = {1000.f, 100.f, 1000.f};
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
@@ -537,6 +565,7 @@ int main() {
     hgi.size = terrainSize;
     hgi.resdiv = 2;
     Heightmap terrainHeightmap = HeightmapCreate(hgi, sharedMaterials[global::MATERIAL_LIT_TERRAIN]);
+    global::groups["terrainHeightmap"] = (void*)&terrainHeightmap;
 
     ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], sharedMaterials[global::MATERIAL_UNLIT]);
     psys.velocity = {1.f, 0.f, 0.f};
@@ -601,7 +630,7 @@ int main() {
                 DrawModel(skyboxModel, {0.f}, 1.0f, WHITE);
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
-            DrawMeshInstanced(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawMeshInstancedOptimized(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
             ParticleSystemStep(&psys);
@@ -681,9 +710,60 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
         }
     }
 
+    float16 *transforms16 = (float16*)RL_CALLOC(treeCount, sizeof(float16));
+    for (i32 i = 0; i < treeCount; i++) {
+        transforms16[i] = MatrixToFloatV(transforms[i]);
+    }
+    RL_FREE(transforms);
+
     InstanceMeshRenderData imrd = {};
     imrd.instanceCount = treeCount;
-    imrd.transforms = transforms;
+    imrd.transforms = transforms16;
+    imrd.mesh = mesh;
+    imrd.material = material;
+    return imrd;
+}
+
+InstanceMeshRenderDataBlocks ForestCreateBlocks(Image image, ForestGenerationInfoBlocks info, Mesh mesh, Material material) {
+    const i32 stride = PixelformatGetStride(image.format);
+    if (stride < 3) {
+        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
+        return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
+    }
+    const v2 imageSize = {(float)image.width, (float)image.height};
+    const u32 treesMax = (u32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
+    u32 treeCount = 0;
+    mat4 *transforms = (mat4*)RL_CALLOC(treesMax, sizeof(mat4));
+    v2 pixelIncrF = imageSize / info.worldSize / info.density;
+    const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
+    const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
+    const byte* imageData = (byte*)image.data;
+    for (u32 x = 0; x < image.width; x += incrx) {
+        for (u32 y = 0; y < image.height; y += incry) {
+            u32 i = (x + y * image.width) * stride;
+            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
+            if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
+                v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
+                transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
+                transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
+                transforms[treeCount] *= MatrixTranslate(
+                    treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
+                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(*info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
+                    treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
+                treeCount++;
+            }
+        }
+    }
+
+    float16 *transforms16 = (float16*)RL_CALLOC(treeCount, sizeof(float16));
+    for (i32 i = 0; i < treeCount; i++) {
+        transforms16[i] = MatrixToFloatV(transforms[i]);
+    }
+    RL_FREE(transforms);
+
+    InstanceMeshRenderData imrd = {};
+    imrd.instanceCount = treeCount;
+    imrd.transforms = transforms16;
     imrd.mesh = mesh;
     imrd.material = material;
     return imrd;
@@ -800,7 +880,8 @@ void CabInit(Cab *cab) {
     cab->neutralDeceleration = 0.004f;
     cab->breakDeceleration = 0.015f;
     cab->turnAngleMax = 24.f;
-    cab->turnAngleSpeed = 64.f;
+    cab->turnAngleSpeed = 20.f;
+    cab->turnNeutralReturn = 30.f;
     cab->accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
     cab->reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
     cab->_transform = MatrixIdentity();
@@ -815,9 +896,7 @@ void CabUpdate(Cab *cab) {
     } else if (inputBreak) {
         cab->_speed -= cab->breakDeceleration;
     } else {
-        float absSpeed = fabsf(cab->_speed);
-        float speedSign = fsignf(cab->_speed);
-        cab->_speed = fmaxf(absSpeed - cab->neutralDeceleration, 0.f) * speedSign;
+        cab->_speed = ApproachZero(cab->_speed, cab->neutralDeceleration);
     }
     cab->_speed = fclampf(cab->_speed, -1.f, 1.f);
 
@@ -829,8 +908,12 @@ void CabUpdate(Cab *cab) {
     }
 
     float inputTurn = ((float)global::input.down[INPUT_RIGHT] - (float)global::input.down[INPUT_LEFT]) * -1.f;
-    float turnAmountStep = inputTurn * FRAME_TIME * cab->turnAngleSpeed;
-    cab->_turnAngle = fclampf(cab->_turnAngle + turnAmountStep, -cab->turnAngleMax, cab->turnAngleMax);
+    if (inputTurn != 0.f) {
+        float turnAmountStep = inputTurn * FRAME_TIME * cab->turnAngleSpeed;
+        cab->_turnAngle = fclampf(cab->_turnAngle + turnAmountStep, -cab->turnAngleMax, cab->turnAngleMax);
+    } else {
+        cab->_turnAngle = ApproachZero(cab->_turnAngle, cab->turnNeutralReturn * FRAME_TIME);
+    }
     cab->yawRotationStep = cab->_turnAngle * DEG2RAD * stepSpeed;
     mat4 yawRotationMatrix = MatrixRotateYaw(cab->yawRotationStep);
     cab->_transform *= yawRotationMatrix;
@@ -839,6 +922,10 @@ void CabUpdate(Cab *cab) {
     cab->direction = cab->direction * yawRotationMatrix;
     cab->velocity = cab->direction * stepSpeed;
     cab->position += cab->velocity;
+    cab->position.y = HeightmapSampleHeight(
+        *(Heightmap*)global::groups["terrainHeightmap"],
+        cab->position.x,
+        cab->position.z);
 }
 void CabDraw(Cab *cab) {
     mat4 transform = cab->_transform * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
@@ -875,12 +962,11 @@ void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     v3 target = Vector3Normalize(camera->target - camera->position);
     v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
     v2 mouseRotationStep = GetMouseDelta() * FRAME_TIME * -0.05f;
-    v2 eulerNext = v2clampv2(euler + mouseRotationStep + rotationAdd, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
+    v2 eulerNext = euler + mouseRotationStep + rotationAdd;
+    //v2 eulerNext = v2clampv2(euler + mouseRotationStep + rotationAdd, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
     v2 eulerDiff = eulerNext - euler;
     mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y);
     v3 rotatedTarget = target * rot;
-    float yawMiddleDifference = Vector2DotProduct({viewMiddle.x, viewMiddle.z}, {rotatedTarget.x, rotatedTarget.z});
-    float pitchMiddleDifference = Vector2DotProduct({viewMiddle.x, viewMiddle.y}, {rotatedTarget.x, rotatedTarget.y});
     
     camera->position = position;
     camera->target = camera->position + target * rot;
@@ -1024,4 +1110,240 @@ void ListPushBack(List *list, void* val) {
     }
     list->data[list->size] = val;
     list->size++;
+}
+
+#define MAX_MATERIAL_MAPS 12
+void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances) {
+#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
+    // Instancing required variables
+    unsigned int instancesVboId = 0;
+
+    // Bind shader program
+    rlEnableShader(material.shader.id);
+
+    // Send required data to shader (matrices, values)
+    //-----------------------------------------------------
+    // Upload to shader material.colDiffuse
+    if (material.shader.locs[SHADER_LOC_COLOR_DIFFUSE] != -1)
+    {
+        float values[4] = {
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.r/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.g/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.b/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.a/255.0f
+        };
+
+        rlSetUniform(material.shader.locs[SHADER_LOC_COLOR_DIFFUSE], values, SHADER_UNIFORM_VEC4, 1);
+    }
+
+    // Upload to shader material.colSpecular (if location available)
+    if (material.shader.locs[SHADER_LOC_COLOR_SPECULAR] != -1)
+    {
+        float values[4] = {
+            (float)material.maps[SHADER_LOC_COLOR_SPECULAR].color.r/255.0f,
+            (float)material.maps[SHADER_LOC_COLOR_SPECULAR].color.g/255.0f,
+            (float)material.maps[SHADER_LOC_COLOR_SPECULAR].color.b/255.0f,
+            (float)material.maps[SHADER_LOC_COLOR_SPECULAR].color.a/255.0f
+        };
+
+        rlSetUniform(material.shader.locs[SHADER_LOC_COLOR_SPECULAR], values, SHADER_UNIFORM_VEC4, 1);
+    }
+
+    // Get a copy of current matrices to work with,
+    // just in case stereo render is required, and we need to modify them
+    // NOTE: At this point the modelview matrix just contains the view matrix (camera)
+    // That's because BeginMode3D() sets it and there is no model-drawing function
+    // that modifies it, all use rlPushMatrix() and rlPopMatrix()
+    Matrix matModel = MatrixIdentity();
+    Matrix matView = rlGetMatrixModelview();
+    Matrix matModelView = MatrixIdentity();
+    Matrix matProjection = rlGetMatrixProjection();
+
+    // Upload view and projection matrices (if locations available)
+    if (material.shader.locs[SHADER_LOC_MATRIX_VIEW] != -1) rlSetUniformMatrix(material.shader.locs[SHADER_LOC_MATRIX_VIEW], matView);
+    if (material.shader.locs[SHADER_LOC_MATRIX_PROJECTION] != -1) rlSetUniformMatrix(material.shader.locs[SHADER_LOC_MATRIX_PROJECTION], matProjection);
+
+    // Enable mesh VAO to attach new buffer
+    rlEnableVertexArray(mesh.vaoId);
+
+    // This could alternatively use a static VBO and either glMapBuffer() or glBufferSubData()
+    // It isn't clear which would be reliably faster in all cases and on all platforms,
+    // anecdotally glMapBuffer() seems very slow (syncs) while glBufferSubData() seems
+    // no faster, since we're transferring all the transform matrices anyway
+    instancesVboId = rlLoadVertexBuffer(transforms, instances*sizeof(float16), false);
+
+    // Instances transformation matrices are send to shader attribute location: SHADER_LOC_MATRIX_MODEL
+    for (unsigned int i = 0; i < 4; i++)
+    {
+        rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_MATRIX_MODEL] + i);
+        rlSetVertexAttribute(material.shader.locs[SHADER_LOC_MATRIX_MODEL] + i, 4, RL_FLOAT, 0, sizeof(Matrix), i*sizeof(Vector4));
+        rlSetVertexAttributeDivisor(material.shader.locs[SHADER_LOC_MATRIX_MODEL] + i, 1);
+    }
+
+    rlDisableVertexBuffer();
+    rlDisableVertexArray();
+
+    // Accumulate internal matrix transform (push/pop) and view matrix
+    // NOTE: In this case, model instance transformation must be computed in the shader
+    matModelView = MatrixMultiply(rlGetMatrixTransform(), matView);
+
+    // Upload model normal matrix (if locations available)
+    if (material.shader.locs[SHADER_LOC_MATRIX_NORMAL] != -1) rlSetUniformMatrix(material.shader.locs[SHADER_LOC_MATRIX_NORMAL], MatrixTranspose(MatrixInvert(matModel)));
+
+#ifdef RL_SUPPORT_MESH_GPU_SKINNING
+    // Upload Bone Transforms
+    if ((material.shader.locs[SHADER_LOC_BONE_MATRICES] != -1) && mesh.boneMatrices)
+    {
+        rlSetUniformMatrices(material.shader.locs[SHADER_LOC_BONE_MATRICES], mesh.boneMatrices, mesh.boneCount);
+    }
+#endif
+
+    //-----------------------------------------------------
+
+    // Bind active texture maps (if available)
+    for (int i = 0; i < MAX_MATERIAL_MAPS; i++)
+    {
+        if (material.maps[i].texture.id > 0)
+        {
+            // Select current shader texture slot
+            rlActiveTextureSlot(i);
+
+            // Enable texture for active slot
+            if ((i == MATERIAL_MAP_IRRADIANCE) ||
+                (i == MATERIAL_MAP_PREFILTER) ||
+                (i == MATERIAL_MAP_CUBEMAP)) rlEnableTextureCubemap(material.maps[i].texture.id);
+            else rlEnableTexture(material.maps[i].texture.id);
+
+            rlSetUniform(material.shader.locs[SHADER_LOC_MAP_DIFFUSE + i], &i, SHADER_UNIFORM_INT, 1);
+        }
+    }
+
+    // Try binding vertex array objects (VAO)
+    // or use VBOs if not possible
+    if (!rlEnableVertexArray(mesh.vaoId))
+    {
+        // Bind mesh VBO data: vertex position (shader-location = 0)
+        rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_POSITION]);
+        rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_POSITION], 3, RL_FLOAT, 0, 0, 0);
+        rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_POSITION]);
+
+        // Bind mesh VBO data: vertex texcoords (shader-location = 1)
+        rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD]);
+        rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01], 2, RL_FLOAT, 0, 0, 0);
+        rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01]);
+
+        if (material.shader.locs[SHADER_LOC_VERTEX_NORMAL] != -1)
+        {
+            // Bind mesh VBO data: vertex normals (shader-location = 2)
+            rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_NORMAL]);
+            rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_NORMAL], 3, RL_FLOAT, 0, 0, 0);
+            rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_NORMAL]);
+        }
+
+        // Bind mesh VBO data: vertex colors (shader-location = 3, if available)
+        if (material.shader.locs[SHADER_LOC_VERTEX_COLOR] != -1)
+        {
+            if (mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_COLOR] != 0)
+            {
+                rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_COLOR]);
+                rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_COLOR], 4, RL_UNSIGNED_BYTE, 1, 0, 0);
+                rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_COLOR]);
+            }
+            else
+            {
+                // Set default value for unused attribute
+                // NOTE: Required when using default shader and no VAO support
+                float value[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+                rlSetVertexAttributeDefault(material.shader.locs[SHADER_LOC_VERTEX_COLOR], value, SHADER_ATTRIB_VEC4, 4);
+                rlDisableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_COLOR]);
+            }
+        }
+
+        // Bind mesh VBO data: vertex tangents (shader-location = 4, if available)
+        if (material.shader.locs[SHADER_LOC_VERTEX_TANGENT] != -1)
+        {
+            rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TANGENT]);
+            rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TANGENT], 4, RL_FLOAT, 0, 0, 0);
+            rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TANGENT]);
+        }
+
+        // Bind mesh VBO data: vertex texcoords2 (shader-location = 5, if available)
+        if (material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD02] != -1)
+        {
+            rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD2]);
+            rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD02], 2, RL_FLOAT, 0, 0, 0);
+            rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD02]);
+        }
+
+#ifdef RL_SUPPORT_MESH_GPU_SKINNING
+        // Bind mesh VBO data: vertex bone ids (shader-location = 6, if available)
+        if (material.shader.locs[SHADER_LOC_VERTEX_BONEIDS] != -1)
+        {
+            rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEIDS]);
+            rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_BONEIDS], 4, RL_UNSIGNED_BYTE, 0, 0, 0);
+            rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_BONEIDS]);
+        }
+
+        // Bind mesh VBO data: vertex bone weights (shader-location = 7, if available)
+        if (material.shader.locs[SHADER_LOC_VERTEX_BONEWEIGHTS] != -1)
+        {
+            rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEWEIGHTS]);
+            rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_BONEWEIGHTS], 4, RL_FLOAT, 0, 0, 0);
+            rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_BONEWEIGHTS]);
+        }
+#endif
+
+        if (mesh.indices != NULL) rlEnableVertexBufferElement(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_INDICES]);
+    }
+
+    int eyeCount = 1;
+    if (rlIsStereoRenderEnabled()) eyeCount = 2;
+
+    for (int eye = 0; eye < eyeCount; eye++)
+    {
+        // Calculate model-view-projection matrix (MVP)
+        Matrix matModelViewProjection = MatrixIdentity();
+        if (eyeCount == 1) matModelViewProjection = MatrixMultiply(matModelView, matProjection);
+        else
+        {
+            // Setup current eye viewport (half screen width)
+            rlViewport(eye*rlGetFramebufferWidth()/2, 0, rlGetFramebufferWidth()/2, rlGetFramebufferHeight());
+            matModelViewProjection = MatrixMultiply(MatrixMultiply(matModelView, rlGetMatrixViewOffsetStereo(eye)), rlGetMatrixProjectionStereo(eye));
+        }
+
+        // Send combined model-view-projection matrix to shader
+        rlSetUniformMatrix(material.shader.locs[SHADER_LOC_MATRIX_MVP], matModelViewProjection);
+
+        // Draw mesh instanced
+        if (mesh.indices != NULL) rlDrawVertexArrayElementsInstanced(0, mesh.triangleCount*3, 0, instances);
+        else rlDrawVertexArrayInstanced(0, mesh.vertexCount, instances);
+    }
+
+    // Unbind all bound texture maps
+    for (int i = 0; i < MAX_MATERIAL_MAPS; i++)
+    {
+        if (material.maps[i].texture.id > 0)
+        {
+            // Select current shader texture slot
+            rlActiveTextureSlot(i);
+
+            // Disable texture for active slot
+            if ((i == MATERIAL_MAP_IRRADIANCE) ||
+                (i == MATERIAL_MAP_PREFILTER) ||
+                (i == MATERIAL_MAP_CUBEMAP)) rlDisableTextureCubemap();
+            else rlDisableTexture();
+        }
+    }
+
+    // Disable all possible vertex array objects (or VBOs)
+    rlDisableVertexArray();
+    rlDisableVertexBuffer();
+    rlDisableVertexBufferElement();
+
+    // Disable shader program
+    rlDisableShader();
+
+    // Remove instance transforms buffer
+    rlUnloadVertexBuffer(instancesVboId);
+#endif
 }
