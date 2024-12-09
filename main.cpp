@@ -56,6 +56,18 @@ String StringSet(String str, char* text);
 String StringSubstr(String str, i32 start, i32 count);
 void StringDestroy(String str);
 
+struct Typewriter {
+    String *text;
+    i32 textCount;
+    i32 textIndex;
+    i32 x;
+    i32 y;
+    float speed;
+    float progress;
+};
+i32 TypewriterStep(Typewriter* tw);
+void TypewriterDraw(Typewriter* tw);
+
 enum INPUT {
     INPUT_ACCELERATE,
     INPUT_BREAK,
@@ -175,19 +187,6 @@ void ListChangeCapacity(List *list, u32 capacity);
 void* ListGet(List *list, u32 ind);
 void ListSet(List *list, u32 ind, void* val);
 void ListPushBack(List *list, void* val);
-
-struct Typewriter {
-    i32 x;
-    i32 y;
-    float speed;
-    float progress;
-    string *text;
-    float nextTextDelay;
-    i32 textIndex;
-};
-i32 TypewriterCreate(string *text);
-i32 TypewriterStep(Typewriter *tw);
-void TypewriterDraw(Typewriter *tw);
 
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
@@ -645,13 +644,14 @@ int main() {
     //     treeModel.meshes[0],
     //     sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
 
-    String str = StringCreate("Teh thing");
+    Typewriter tw = {0};
+    tw.text = &global::dialogue[1];
+    tw.textCount = 2;
+    tw.speed = 16.f;
+    tw.x = screenWidth / 2;
+    tw.y = screenHeight / 2 + screenHeight / 4;
 
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_H)) {
-            str = StringSet(str, "New thing");
-        }
-
         InputUpdate(&global::input);
 
         if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
@@ -679,6 +679,8 @@ int main() {
 
         UpdateGlobalMaterials(sharedMaterials, usingCamera->position);
 
+        TypewriterStep(&tw);
+
         BeginDrawing();
         ClearBackground(RAYWHITE);
         BeginMode3D(*usingCamera);
@@ -694,7 +696,7 @@ int main() {
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
         EndMode3D();
-        DrawText(str.cstr, 200, 200, 16, WHITE);
+        TypewriterDraw(&tw);
         DrawFPS(4, 4);
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
@@ -717,7 +719,9 @@ String StringCreate(char* text) {
 }
 String _StringCreate(i32 length) {
     String str = {};
-    str.cstr = (char*)malloc(length);
+    str.cstr = (char*)malloc(length + 1);
+    memset(str.cstr, 0, length);
+    str.cstr[length] = '\0';
     str.length = length;
     return str;
 }
@@ -732,8 +736,11 @@ String StringSet(String str, char* text) {
     return str;
 }
 String StringSubstr(String str, i32 start, i32 count) {
-    String substr = _StringCreate(str.length);
-    memccpy(substr.cstr, str.cstr, '\0', str.length);
+    if (count >= (str.length + 1) - start) {
+        count = str.length - start;
+    }
+    String substr = _StringCreate(count);
+    memccpy(substr.cstr, &str.cstr[start], '\0', count);
     return substr;
 }
 void StringDestroy(String str) {
@@ -743,19 +750,17 @@ void StringDestroy(String str) {
 }
 
 i32 TypewriterStep(Typewriter *tw) {
-    // float len = (float)tw->text.length();
-    // tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, len);
-    // return tw->progress == len;
-    return 0;
+    float length = (float)tw->text[tw->textIndex].length;
+    tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
+    return tw->progress == length;
 }
 // TODO: optimize by only measuring text when the rendered string changes
 void TypewriterDraw(Typewriter *tw) {
+    String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
     Font font = GetFontDefault();
-    i32 progress = (i32)tw->progress;
-    string renderedString = ""; //tw->text.substr(0, progress);
-    const char* renderedCstring = renderedString.c_str();
-    v2 textSize = MeasureTextEx(font, renderedCstring, 32, 1);
-    DrawTextPro(font, renderedCstring, {(float)tw->x, (float)tw->y}, textSize / 2.f, 0.f, 32.f, 1, WHITE);
+    v2 textSize = MeasureTextEx(font, substr.cstr, 18, 1);
+    DrawTextPro(font, substr.cstr, {(float)tw->x, (float)tw->y}, textSize / 2.f, 0.f, 18.f, 1.f, WHITE);
+    StringDestroy(substr);
 }
 
 void InputInit(Input *input) {
