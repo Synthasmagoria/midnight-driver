@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <string>
 
+using std::string;
+using std::unordered_map;
+
 typedef uint8_t byte;
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -18,6 +21,7 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 typedef Matrix mat4;
+typedef Vector4 v4;
 typedef Vector3 v3;
 typedef Vector2 v2;
 
@@ -25,6 +29,8 @@ typedef Vector2 v2;
 #define FRAMERATE 60
 #define TAU PI * 2.f
 
+struct String;
+struct Typewriter;
 struct Input;
 struct ForestGenerationInfo;
 struct InstanceMeshRenderData;
@@ -39,6 +45,16 @@ struct Heightmap;
 struct Cab;
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
+
+struct String {
+    char* cstr;
+    i32 length;
+};
+String StringCreate(char* text);
+String _StringCreate(i32 length);
+String StringSet(String str, char* text);
+String StringSubstr(String str, i32 start, i32 count);
+void StringDestroy(String str);
 
 enum INPUT {
     INPUT_ACCELERATE,
@@ -77,6 +93,7 @@ struct ForestGenerationInfo {
 struct ForestGenerationInfoBlocks {
     v2 worldPosition;
     v2 worldSize;
+    i32 blockDivide;
     float density;
     float treeChance;
     float randomPositionOffset;
@@ -92,13 +109,16 @@ struct InstanceMeshRenderData {
     Material material;
 };
 struct InstanceMeshRenderDataBlocks {
-    float16 *transforms;
+    float16 **transformBlocks;
     u32 instanceCount;
+    i32 blockCount;
+    v3 position;
     Model _model;
     Mesh mesh;
     Material material;
 };
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
+InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // https://www.desmos.com/calculator/scz7zhonfw
@@ -155,6 +175,19 @@ void ListChangeCapacity(List *list, u32 capacity);
 void* ListGet(List *list, u32 ind);
 void ListSet(List *list, u32 ind, void* val);
 void ListPushBack(List *list, void* val);
+
+struct Typewriter {
+    i32 x;
+    i32 y;
+    float speed;
+    float progress;
+    string *text;
+    float nextTextDelay;
+    i32 textIndex;
+};
+i32 TypewriterCreate(string *text);
+i32 TypewriterStep(Typewriter *tw);
+void TypewriterDraw(Typewriter *tw);
 
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
@@ -390,18 +423,27 @@ namespace global {
         IMAGE_SKYBOX,
         IMAGE_HEIGHTMAP,
         IMAGE_TERRAINMAP,
+        IMAGE_TERRAINMAP_TEST,
         IMAGE_COUNT
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
         "heightmap2.png",
-        "terrainmap2.png"
+        "terrainmap2.png",
+        "terrainmapTest.png"
     };
     Image images[IMAGE_COUNT];
 
     Input input;
 
-    std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
+    unordered_map<string, void*> groups = unordered_map<string, void*>();
+
+    const i32 dialogueCount = 3;
+    String dialogue[dialogueCount] = {
+       StringCreate("This is a string instance"),
+       StringCreate("Second sentence hits harder than the first for some reason"),
+       StringCreate("Holy fuck there's a third")
+    };
 }
 
 void LoadGameShaders() {
@@ -511,10 +553,10 @@ void UnloadGameResources() {
 
 int main() {
     u32 freecam = 0; 
-
-    v2 screenSize = {1440, 800};
+    i32 screenWidth = 1440;
+    i32 screenHeight = 800;
     SetTraceLogLevel(4);
-    InitWindow(screenSize.x, screenSize.y, "Midnight Driver");
+    InitWindow(screenWidth, screenHeight, "Midnight Driver");
     SetTargetFPS(60);
     DisableCursor();
 
@@ -570,31 +612,46 @@ int main() {
     ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], sharedMaterials[global::MATERIAL_UNLIT]);
     psys.velocity = {1.f, 0.f, 0.f};
 
-    Model treeModel = global::models[global::MODEL_TREE];
-    ForestGenerationInfo forestGenInfo = {};
-    forestGenInfo.density = 0.6f;
-    forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
-    forestGenInfo.worldPosition = v2{terrainPosition.x, terrainPosition.z};
-    forestGenInfo.treeChance = 90.f;
-    forestGenInfo.randomPositionOffset = 0.25f;
-    forestGenInfo.randomYDip = 0.f;
-    forestGenInfo.randomTiltDegrees = 10.f;
-    forestGenInfo.heightmap = &terrainHeightmap;
+    ForestGenerationInfo forestInfo = {};
+    forestInfo.worldPosition = {0.f, 0.f};
+    forestInfo.worldSize = {16.f, 16.f};
+    InstanceMeshRenderData imrd = ForestCreateBlocks(
+        global::images[global::IMAGE_TERRAINMAP_TEST],
+        forestInfo,
+        global::models[global::MODEL_TREE].meshes[0],
+        sharedMaterials[global::MATERIAL_UNLIT]);
+
+    // Model treeModel = global::models[global::MODEL_TREE];
+    // ForestGenerationInfo forestGenInfo = {};
+    // forestGenInfo.density = 0.6f;
+    // forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
+    // forestGenInfo.worldPosition = v2{terrainPosition.x, terrainPosition.z};
+    // forestGenInfo.treeChance = 90.f;
+    // forestGenInfo.randomPositionOffset = 0.25f;
+    // forestGenInfo.randomYDip = 0.f;
+    // forestGenInfo.randomTiltDegrees = 10.f;
+    // forestGenInfo.heightmap = &terrainHeightmap;
     /*
         TODO: Add a random color tint to the trees
         TODO: Add a random texture to the trees
         TODO: Add 3 different tree models
         TODO: Add basic flora
     */
-    Material forestMaterial = sharedMaterials[global::MATERIAL_LIT_INSTANCED];
-    forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
-    InstanceMeshRenderData forestImrd = ForestCreate(
-        global::images[global::IMAGE_TERRAINMAP],
-        forestGenInfo,
-        treeModel.meshes[0],
-        sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
+    // Material forestMaterial = sharedMaterials[global::MATERIAL_LIT_INSTANCED];
+    // forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
+    // InstanceMeshRenderData forestImrd = ForestCreate(
+    //     global::images[global::IMAGE_TERRAINMAP],
+    //     forestGenInfo,
+    //     treeModel.meshes[0],
+    //     sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
+
+    String str = StringCreate("Teh thing");
 
     while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_H)) {
+            str = StringSet(str, "New thing");
+        }
+
         InputUpdate(&global::input);
 
         if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
@@ -630,18 +687,19 @@ int main() {
                 DrawModel(skyboxModel, {0.f}, 1.0f, WHITE);
             rlEnableBackfaceCulling();
             rlEnableDepthMask();
-            DrawMeshInstancedOptimized(forestImrd.mesh, forestImrd.material, forestImrd.transforms, forestImrd.instanceCount);
+            DrawMeshInstancedOptimized(imrd.mesh, imrd.material, imrd.transforms, imrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
         EndMode3D();
+        DrawText(str.cstr, 200, 200, 16, WHITE);
         DrawFPS(4, 4);
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
         }
-        DrawCrosshair(screenSize.x / 2, screenSize.y / 2, WHITE);
+        DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
         EndDrawing();
     }
 
@@ -649,6 +707,55 @@ int main() {
     ParticleSystemDestroy(&psys);
 
     return(0);
+}
+
+String StringCreate(char* text) {
+    String str = {};
+    str.cstr = nullptr;
+    str.length = 0;
+    return StringSet(str, text);
+}
+String _StringCreate(i32 length) {
+    String str = {};
+    str.cstr = (char*)malloc(length);
+    str.length = length;
+    return str;
+}
+String StringSet(String str, char* text) {
+    i32 len = strlen(text) + 1;
+    if (str.cstr != nullptr) {
+        free(str.cstr);
+    }
+    str.cstr = (char*)malloc(len);
+    memccpy(str.cstr, text, '\0', len);
+    str.length = len;
+    return str;
+}
+String StringSubstr(String str, i32 start, i32 count) {
+    String substr = _StringCreate(str.length);
+    memccpy(substr.cstr, str.cstr, '\0', str.length);
+    return substr;
+}
+void StringDestroy(String str) {
+    if (str.cstr != nullptr) {
+        free(str.cstr);
+    }
+}
+
+i32 TypewriterStep(Typewriter *tw) {
+    // float len = (float)tw->text.length();
+    // tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, len);
+    // return tw->progress == len;
+    return 0;
+}
+// TODO: optimize by only measuring text when the rendered string changes
+void TypewriterDraw(Typewriter *tw) {
+    Font font = GetFontDefault();
+    i32 progress = (i32)tw->progress;
+    string renderedString = ""; //tw->text.substr(0, progress);
+    const char* renderedCstring = renderedString.c_str();
+    v2 textSize = MeasureTextEx(font, renderedCstring, 32, 1);
+    DrawTextPro(font, renderedCstring, {(float)tw->x, (float)tw->y}, textSize / 2.f, 0.f, 32.f, 1, WHITE);
 }
 
 void InputInit(Input *input) {
@@ -723,49 +830,55 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
     imrd.material = material;
     return imrd;
 }
+InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material) {
+    const i32 pixelStride = PixelformatGetStride(image.format);
+    const i32 pixelCount = image.width * image.height;
+    byte* imageData = (byte*)image.data;
+    mat4 *transforms = (mat4*)RL_CALLOC(pixelCount, sizeof(mat4));
+    i32 transformCount = 0;
+    v2 imageSize = {(float)image.width, (float)image.height};
+    for (i32 i = 0; i < pixelCount; i++) {
+        float x = (float)i;
+        x = fmodf(x, imageSize.x);
+        float y = ((float)i / imageSize.x);
+        if (x + 1.f == imageSize.x || y + 1.f == imageSize.y) {
+            continue;
+        }
 
-InstanceMeshRenderDataBlocks ForestCreateBlocks(Image image, ForestGenerationInfoBlocks info, Mesh mesh, Material material) {
-    const i32 stride = PixelformatGetStride(image.format);
-    if (stride < 3) {
-        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
-        return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
-    }
-    const v2 imageSize = {(float)image.width, (float)image.height};
-    const u32 treesMax = (u32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
-    u32 treeCount = 0;
-    mat4 *transforms = (mat4*)RL_CALLOC(treesMax, sizeof(mat4));
-    v2 pixelIncrF = imageSize / info.worldSize / info.density;
-    const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
-    const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
-    const byte* imageData = (byte*)image.data;
-    for (u32 x = 0; x < image.width; x += incrx) {
-        for (u32 y = 0; y < image.height; y += incry) {
-            u32 i = (x + y * image.width) * stride;
-            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
-            if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
-                v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
-                transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
-                transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
-                transforms[treeCount] *= MatrixTranslate(
-                    treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
-                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(*info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
-                    treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
-                treeCount++;
-            }
+
+
+        // TODO: SIMD
+        i32 dataIndex = i * pixelStride;
+        byte* pixelData = &imageData[dataIndex];
+        byte* pixelDataRight = &imageData[dataIndex + pixelStride];
+        byte* pixelDataDown = &imageData[dataIndex + pixelStride * image.width];
+        byte* pixelDataRightDown = &imageData[dataIndex + pixelStride + pixelStride * image.width];
+        v4 value = {(float)pixelData[0], (float)pixelData[1], (float)pixelData[2], 1.f};
+        v4 valueRight = {(float)pixelDataRight[0], (float)pixelDataRight[1], (float)pixelDataRight[2], 1.f};
+        v4 valueDown = {(float)pixelDataDown[0], (float)pixelDataDown[1], (float)pixelDataDown[2], 1.f};
+        v4 valueRightDown = {(float)pixelDataRightDown[0], (float)pixelDataRightDown[1], (float)pixelDataRightDown[2], 1.f};
+        float lerpRight = ffractf(x);
+        float lerpDown = ffractf(y);
+        v4 bilinearValue = Vector4Lerp(Vector4Lerp(value, valueRight, lerpRight), Vector4Lerp(valueDown, valueRightDown, lerpRight), lerpDown);
+
+        if (bilinearValue.x > 128.f) {
+            v2 worldPosition = v2{x / imageSize.x, y / imageSize.y} * info.worldSize + info.worldPosition;
+            transforms[transformCount] = MatrixTranslate(worldPosition.x, 0.f, worldPosition.y);
+            transformCount++;
         }
     }
 
-    float16 *transforms16 = (float16*)RL_CALLOC(treeCount, sizeof(float16));
-    for (i32 i = 0; i < treeCount; i++) {
-        transforms16[i] = MatrixToFloatV(transforms[i]);
+    float16 *transformsV = (float16*)RL_CALLOC(transformCount, sizeof(float16));
+    for (i32 i = 0; i < transformCount; i++) {
+        transformsV[i] = MatrixToFloatV(transforms[i]);
     }
     RL_FREE(transforms);
 
     InstanceMeshRenderData imrd = {};
-    imrd.instanceCount = treeCount;
-    imrd.transforms = transforms16;
-    imrd.mesh = mesh;
+    imrd.instanceCount = transformCount;
     imrd.material = material;
+    imrd.mesh = mesh;
+    imrd.transforms = transformsV;
     return imrd;
 }
 
