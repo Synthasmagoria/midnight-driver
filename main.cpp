@@ -90,7 +90,7 @@ struct DialogueOptions {
     NPatchInfo npatchInfo;
     Texture2D npatchTexture;
 };
-void DialogueOptionsConsumeInput(DialogueOptions* dialogueOptions, Input* input);
+void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
 void DialogueOptionsDraw(DialogueOptions* dialogueOptions);
 
 struct TextDrawingStyle {
@@ -294,17 +294,21 @@ inline void DrawCrosshair(int x, int y, Color col) {
     DrawLine(x - 4, y, x + 4, y, col);
     DrawLine(x, y - 4, x, y + 4, col);
 }
+inline i32 iwrapi(i32 val, i32 min, i32 max) {
+    i32 range = max - min;
+	return range == 0 ? min : min + ((((val - min) % range) + range) % range);
+}
 inline float ffractf(float val) {
     return val - floorf(val);
-}
-inline v2 Vector2Fract(v2 v) {
-    return {ffractf(v.x), ffractf(v.y)};
 }
 inline float fclampf(float val, float min, float max) {
     return fminf(fmaxf(val, min), max);
 }
 inline float fsignf(float val) {
     return (float)(!signbit(val)) * 2.f - 1.f;
+}
+inline v2 v2fractv2(v2 v) {
+    return {ffractf(v.x), ffractf(v.y)};
 }
 inline v2 v2clampv2(v2 val, v2 min, v2 max) {
     return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
@@ -770,6 +774,7 @@ int main() {
             DrawGrid(20, 1.f);
         EndMode3D();
         TypewriterDraw(&tw);
+        DialogueOptionsHandleInput(&dialogueOptions);
         DialogueOptionsDraw(&dialogueOptions);
         DrawFPS(4, 4);
         if (freecam) {
@@ -879,14 +884,16 @@ void TypewriterDraw(Typewriter *tw) {
     StringDestroy(substr);
 }
 
-void DialogueOptionsConsumeInput(DialogueOptions* dialogueOptions) {
+void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions) {
     i32 input = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
+    dialogueOptions->index = iwrapi(dialogueOptions->index + input, 0, dialogueOptions->options->size);
 }
 void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
     List* options = dialogueOptions->options;
     TextDrawingStyle* textStyle = dialogueOptions->textStyle;
     v2* textSize = (v2*)malloc(options->size * sizeof(v2));
     v2 boxSize = {0.f, 0.f};
+    // TODO: These measurements can be done as preprocessing. No need for the memory allocation every fucking frame
     for (i32 i = 0; i < options->size; i++) {
         String *option = (String*)ListGet(options, i);
         textSize[i] = MeasureTextEx(textStyle->font, option->cstr, textStyle->size, textStyle->charSpacing);
@@ -894,6 +901,13 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
     }
     boxSize.x += 64.f;
     for (i32 i = 0; i < options->size; i++) {
+        Color textTint = GRAY;
+        Color boxTint = GRAY;
+        if (i == dialogueOptions->index) {
+            textTint = WHITE;
+            boxTint = WHITE;
+        }
+
         String *option = (String*)ListGet(options, i);
         i32 x = dialogueOptions->x;
         i32 y = dialogueOptions->y + i * ((i32)textStyle->size + dialogueOptions->optionSeparationAdd);
@@ -911,7 +925,7 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
             dialogueBoxRect,
             {0.f, 0.f},
             0.f,
-            WHITE);
+            boxTint);
         DrawTextPro(
             textStyle->font,
             option->cstr,
@@ -920,7 +934,7 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
             0.f,
             textStyle->size,
             textStyle->charSpacing,
-            textStyle->color);
+            textTint);
     }
     free(textSize);
 }
@@ -1306,7 +1320,7 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
         v2 abspos = v2{x, z} - rectBegin;
         v2 normpos = abspos / v2{heightmap.size.x, heightmap.size.z};
         v2 datapos = normpos * v2{(float)heightmap.heightDataWidth, (float)heightmap.heightDataHeight};
-        v2 dataposFract = Vector2Fract(datapos);
+        v2 dataposFract = v2fractv2(datapos);
         u32 dataX = datapos.x;
         u32 dataY = datapos.y;
         bool nextX = dataX + 1 < heightmap.heightDataWidth;
