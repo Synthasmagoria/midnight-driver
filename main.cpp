@@ -60,12 +60,19 @@ struct Typewriter {
     String *text;
     i32 textCount;
     i32 textIndex;
+    float autoContinueDelay;
+    float _autoContinueTime;
+    float autoHideOnEndDelay;
+    float _autoHideOnEndTime;
+    i32 visible;
     i32 x;
     i32 y;
     float speed;
     float progress;
 };
 i32 TypewriterStep(Typewriter* tw);
+void _TypewriterAdvanceText(Typewriter *tw);
+void _TypewriterReset(Typewriter *tw);
 void TypewriterDraw(Typewriter* tw);
 
 enum INPUT {
@@ -646,8 +653,11 @@ int main() {
 
     Typewriter tw = {0};
     tw.text = &global::dialogue[1];
+    tw.visible = true;
     tw.textCount = 2;
     tw.speed = 16.f;
+    tw.autoContinueDelay = 1.f;
+    tw.autoHideOnEndDelay = 3.f;
     tw.x = screenWidth / 2;
     tw.y = screenHeight / 2 + screenHeight / 4;
 
@@ -750,12 +760,54 @@ void StringDestroy(String str) {
 }
 
 i32 TypewriterStep(Typewriter *tw) {
+    if (tw->text == nullptr) {
+        return 0;
+    }
+
     float length = (float)tw->text[tw->textIndex].length;
+    float textProgressPrevious = tw->progress;
     tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
+    if (tw->progress == length) {
+        if (tw->textIndex + 1 < tw->textCount) {
+            if (textProgressPrevious < tw->progress) {
+                tw->_autoContinueTime = tw->autoContinueDelay;
+            } else {
+                tw->_autoContinueTime = fmaxf(tw->_autoContinueTime - FRAME_TIME, 0.f);
+                if (tw->_autoContinueTime == 0.f) {
+                    _TypewriterAdvanceText(tw);
+                }
+            }
+        } else if (tw->textIndex + 1 == tw->textCount) {
+            if (textProgressPrevious < tw->progress) {
+                tw->_autoHideOnEndTime = tw->autoHideOnEndDelay;
+            } else {
+                tw->_autoHideOnEndTime = fmaxf(tw->_autoHideOnEndTime - FRAME_TIME, 0.f);
+                if (tw->_autoHideOnEndTime == 0.f) {
+                    _TypewriterReset(tw);
+                    tw->visible = false;
+                }
+            }
+        }
+    }
     return tw->progress == length;
+}
+void _TypewriterAdvanceText(Typewriter *tw) {
+    if (tw->textIndex + 1 < tw->textCount) {
+        tw->textIndex++;
+        tw->progress = 0.f;
+    }
+}
+void _TypewriterReset(Typewriter *tw) {
+    tw->text = nullptr;
+    tw->progress = 0.f;
+    tw->textCount = 0;
+    tw->textIndex = 0;
 }
 // TODO: optimize by only measuring text when the rendered string changes
 void TypewriterDraw(Typewriter *tw) {
+    if (!tw->visible || tw->text == nullptr) {
+        return;
+    }
     String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
     Font font = GetFontDefault();
     v2 textSize = MeasureTextEx(font, substr.cstr, 18, 1);
@@ -849,9 +901,7 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
         if (x + 1.f == imageSize.x || y + 1.f == imageSize.y) {
             continue;
         }
-
-
-
+        
         // TODO: SIMD
         i32 dataIndex = i * pixelStride;
         byte* pixelData = &imageData[dataIndex];
