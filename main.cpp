@@ -21,6 +21,7 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 typedef Matrix mat4;
+typedef Rectangle rect2;
 typedef Vector4 v4;
 typedef Vector3 v3;
 typedef Vector2 v2;
@@ -31,6 +32,8 @@ typedef Vector2 v2;
 
 struct String;
 struct Typewriter;
+struct DialogueOptions;
+struct TextDrawingStyle;
 struct Input;
 struct ForestGenerationInfo;
 struct InstanceMeshRenderData;
@@ -69,11 +72,33 @@ struct Typewriter {
     i32 y;
     float speed;
     float progress;
+    TextDrawingStyle* textStyle;
 };
 i32 TypewriterStep(Typewriter* tw);
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
 void TypewriterDraw(Typewriter* tw);
+
+struct DialogueOptions {
+    List *options;
+    i32 index;
+    i32 x;
+    i32 y;
+    float optionSeparationAdd;
+    float optionBoxHeightAdd;
+    TextDrawingStyle *textStyle;
+    NPatchInfo npatchInfo;
+    Texture2D npatchTexture;
+};
+void DialogueOptionsConsumeInput(DialogueOptions* dialogueOptions, Input* input);
+void DialogueOptionsDraw(DialogueOptions* dialogueOptions);
+
+struct TextDrawingStyle {
+    Color color;
+    Font font;
+    float size;
+    i32 charSpacing;
+};
 
 enum INPUT {
     INPUT_ACCELERATE,
@@ -81,6 +106,8 @@ enum INPUT {
     INPUT_TOGGLE_DEBUG,
     INPUT_LEFT,
     INPUT_RIGHT,
+    INPUT_DOWN,
+    INPUT_UP,
     INPUT_DEBUG_LEFT,
     INPUT_DEBUG_RIGHT,
     INPUT_DEBUG_FORWARD,
@@ -282,6 +309,12 @@ inline float fsignf(float val) {
 inline v2 v2clampv2(v2 val, v2 min, v2 max) {
     return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
 }
+inline v2 v2maxv2(v2 a, v2 b) {
+    return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};
+}
+inline v2 v2minv2(v2 a, v2 b) {
+    return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};
+}
 inline float ApproachZero(float val, float amount) {
     return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);
 }
@@ -416,12 +449,14 @@ namespace global {
         TEXTURE_STAR,
         TEXTURE_TERRAIN,
         TEXTURE_TERRAINMAP_BLURRED,
+        TEXTURE_NPATCH,
         TEXTURE_COUNT
     };
     const char *texturePaths[global::TEXTURE_COUNT] = {
         "star.png",
         "terrain.png",
-        "terrainmap2.png"
+        "terrainmap2.png",
+        "npatch.png"
     };
     Texture2D textures[global::TEXTURE_COUNT];
 
@@ -651,15 +686,43 @@ int main() {
     //     treeModel.meshes[0],
     //     sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
 
+    TextDrawingStyle textDrawingStyle = {};
+    textDrawingStyle.charSpacing = 1;
+    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.size = 24.f;
+    textDrawingStyle.color = WHITE;
+
     Typewriter tw = {0};
     tw.text = &global::dialogue[1];
-    tw.visible = true;
+    tw.visible = false;
     tw.textCount = 2;
     tw.speed = 16.f;
     tw.autoContinueDelay = 1.f;
     tw.autoHideOnEndDelay = 3.f;
     tw.x = screenWidth / 2;
     tw.y = screenHeight / 2 + screenHeight / 4;
+    tw.textStyle = &textDrawingStyle;
+
+    String dialogueOptionText[] = {
+        StringCreate("Hello!"),
+        StringCreate("What can I do for you?"),
+        StringCreate("Want a cigarette?")
+    };
+    List dialogueOptionsList = ListCreate(3);
+    for (i32 i = 0; i < 3; i++) {
+        ListSet(&dialogueOptionsList, i, (void*)&dialogueOptionText[i]);
+    }
+
+    DialogueOptions dialogueOptions = {};
+    dialogueOptions.index = 0;
+    dialogueOptions.options = &dialogueOptionsList;
+    dialogueOptions.x = screenWidth / 2;
+    dialogueOptions.y = screenHeight / 2 + screenHeight / 4;
+    dialogueOptions.textStyle = &textDrawingStyle;
+    dialogueOptions.npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
+    dialogueOptions.npatchTexture = global::textures[global::TEXTURE_NPATCH];
+    dialogueOptions.optionBoxHeightAdd = 32.f;
+    dialogueOptions.optionSeparationAdd = 48.f;
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -707,6 +770,7 @@ int main() {
             DrawGrid(20, 1.f);
         EndMode3D();
         TypewriterDraw(&tw);
+        DialogueOptionsDraw(&dialogueOptions);
         DrawFPS(4, 4);
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
@@ -808,11 +872,57 @@ void TypewriterDraw(Typewriter *tw) {
     if (!tw->visible || tw->text == nullptr) {
         return;
     }
+    TextDrawingStyle* textStyle = tw->textStyle;
     String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
-    Font font = GetFontDefault();
-    v2 textSize = MeasureTextEx(font, substr.cstr, 18, 1);
-    DrawTextPro(font, substr.cstr, {(float)tw->x, (float)tw->y}, textSize / 2.f, 0.f, 18.f, 1.f, WHITE);
+    v2 textAlign = MeasureTextEx(textStyle->font, substr.cstr, textStyle->size, textStyle->charSpacing) / 2.f;
+    DrawTextPro(textStyle->font, substr.cstr, {(float)tw->x, (float)tw->y}, textAlign, 0.f, 18.f, 1.f, WHITE);
     StringDestroy(substr);
+}
+
+void DialogueOptionsConsumeInput(DialogueOptions* dialogueOptions) {
+    i32 input = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
+}
+void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
+    List* options = dialogueOptions->options;
+    TextDrawingStyle* textStyle = dialogueOptions->textStyle;
+    v2* textSize = (v2*)malloc(options->size * sizeof(v2));
+    v2 boxSize = {0.f, 0.f};
+    for (i32 i = 0; i < options->size; i++) {
+        String *option = (String*)ListGet(options, i);
+        textSize[i] = MeasureTextEx(textStyle->font, option->cstr, textStyle->size, textStyle->charSpacing);
+        boxSize = v2maxv2(boxSize, textSize[i]);
+    }
+    boxSize.x += 64.f;
+    for (i32 i = 0; i < options->size; i++) {
+        String *option = (String*)ListGet(options, i);
+        i32 x = dialogueOptions->x;
+        i32 y = dialogueOptions->y + i * ((i32)textStyle->size + dialogueOptions->optionSeparationAdd);
+        float xf = (float)x;
+        float yf = (float)y;
+        float boxHeightAdd = 24.f;
+        rect2 dialogueBoxRect = {
+            xf - boxSize.x / 2.f,
+            yf - boxSize.y / 2.f - dialogueOptions->optionBoxHeightAdd / 2.f,
+            boxSize.x,
+            boxSize.y + dialogueOptions->optionBoxHeightAdd};
+        DrawTextureNPatch(
+            dialogueOptions->npatchTexture,
+            dialogueOptions->npatchInfo,
+            dialogueBoxRect,
+            {0.f, 0.f},
+            0.f,
+            WHITE);
+        DrawTextPro(
+            textStyle->font,
+            option->cstr,
+            {xf, yf},
+            textSize[i] / 2.0,
+            0.f,
+            textStyle->size,
+            textStyle->charSpacing,
+            textStyle->color);
+    }
+    free(textSize);
 }
 
 void InputInit(Input *input) {
@@ -820,6 +930,8 @@ void InputInit(Input *input) {
     input->map[INPUT_BREAK] = KEY_LEFT_SHIFT;
     input->map[INPUT_LEFT] = KEY_LEFT;
     input->map[INPUT_RIGHT] = KEY_RIGHT;
+    input->map[INPUT_DOWN] = KEY_DOWN;
+    input->map[INPUT_UP] = KEY_UP;
     input->map[INPUT_TOGGLE_DEBUG] = KEY_BACKSPACE;
     input->map[INPUT_DEBUG_LEFT] = KEY_A;
     input->map[INPUT_DEBUG_RIGHT] = KEY_D;
