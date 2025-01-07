@@ -606,37 +606,37 @@ void UnloadGameResources() {
 const i32 screenWidth = 1440;
 const i32 screenHeight = 800;
 
-i32 SceneSetup01(GameObject* goOut) {
+i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     i32 goCount = 0;
 
-    Typewriter tw = {};
-    tw.text = &global::dialogue[1];
-    tw.visible = false;
-    tw.textCount = 2;
-    tw.speed = 16.f;
-    tw.autoContinueDelay = 1.f;
-    tw.autoHideOnEndDelay = 3.f;
-    tw.x = screenWidth / 2;
-    tw.y = screenHeight / 2 + screenHeight / 4;
-    tw.textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
-    goOut[goCount] = TypewriterPack(&tw); goCount++;
+    Typewriter* tw = (Typewriter*)MemoryManagerReserve(mm, sizeof(Typewriter));
+    tw->text = &global::dialogue[1];
+    tw->visible = false;
+    tw->textCount = 2;
+    tw->speed = 16.f;
+    tw->autoContinueDelay = 1.f;
+    tw->autoHideOnEndDelay = 3.f;
+    tw->x = screenWidth / 2;
+    tw->y = screenHeight / 2 + screenHeight / 4;
+    tw->textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
+    goOut[goCount] = TypewriterPack(tw); goCount++;
 
-    Skybox skybox = {};
-    skybox.model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    skybox.shader = global::shaders[global::SHADER_SKYBOX];
+    Skybox* skybox = (Skybox*)MemoryManagerReserve(mm, sizeof(Skybox));
+    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    skybox->shader = global::shaders[global::SHADER_SKYBOX];
     {
         i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
         i32 gammaValue = 0;
-        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
         i32 vflippedValue = 0;
-        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
     }
-    skybox.model.materials[0].shader = skybox.shader;
-    skybox.model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+    skybox->model.materials[0].shader = skybox->shader;
+    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
         global::images[global::IMAGE_SKYBOX],
         CUBEMAP_LAYOUT_AUTO_DETECT);
-    goOut[goCount] = SkyboxPack(&skybox); goCount++;
+    goOut[goCount] = SkyboxPack(skybox); goCount++;
 
     return goCount;
 };
@@ -650,13 +650,15 @@ int main() {
     SetTargetFPS(60);
     DisableCursor();
 
+    MemoryManager memoryManager = MemoryManagerCreate(1 << 16);
+
     Material sharedMaterials[global::MATERIAL_COUNT];
     LoadGameResources();
     InputInit(&global::input);
     InitSharedMaterials(sharedMaterials);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    i32 gameObjectCount = SceneSetup01(gameObject);
+    i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
 
     Camera camera = {};
     camera.fovy = 60.f;
@@ -764,7 +766,11 @@ int main() {
         BeginDrawing();
         ClearBackground(RAYWHITE);
         BeginMode3D(*usingCamera);
-            
+            for (int i = 0; i < gameObjectCount; i++) {
+                if (gameObject[i].Draw != nullptr) {
+                    gameObject[i].Draw(gameObject[i].data);
+                }
+            }
             DrawMeshInstancedOptimized(imrd.mesh, imrd.material, imrd.transforms, imrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
@@ -782,6 +788,7 @@ int main() {
         EndDrawing();
     }
 
+    MemoryManagerDestroy(&memoryManager);
     UnloadGameResources();
     ParticleSystemDestroy(&psys);
 
