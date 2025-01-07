@@ -29,7 +29,9 @@ typedef Vector2 v2;
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
+#define GAME_OBJECT_MAX 1000
 
+struct MemoryManager;
 struct String;
 struct Typewriter;
 struct DialogueOptions;
@@ -46,8 +48,19 @@ struct List;
 struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
+struct GameObject;
+struct Skybox;
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
+
+struct MemoryManager {
+    void* buffer;
+    i32 location;
+    i32 size;
+};
+MemoryManager MemoryManagerCreate(i32 size);
+void MemoryManagerDestroy(MemoryManager* mm);
+void* MemoryManagerReserve(MemoryManager* mm, i32 size);
 
 struct String {
     char* cstr;
@@ -74,10 +87,11 @@ struct Typewriter {
     float progress;
     TextDrawingStyle* textStyle;
 };
-i32 TypewriterStep(Typewriter* tw);
+void TypewriterUpdate(void* tw);
+void TypewriterDraw(void* tw);
+GameObject TypewriterPack(Typewriter* tw);
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
-void TypewriterDraw(Typewriter* tw);
 
 struct DialogueOptions {
     List *options;
@@ -280,12 +294,22 @@ v3 GetCameraForwardNorm(Camera *camera);
 v3 GetCameraUpNorm(Camera *camera);
 v3 GetCameraRightNorm(Camera *camera);
 
-inline int PointInRectangle(v2 begin, v2 end, v2 pt) {
-    return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;
-}
-inline const char* TextFormatVector3(v3 v) {
-    return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);
-}
+struct GameObject {
+    void (*Update) (void*);
+    void (*Draw) (void*);
+    void *data;
+};
+
+struct Skybox {
+    Model model;
+    Shader shader;
+};
+void SkyboxDraw(void* _skybox);
+GameObject SkyboxPack(Skybox* skybox);
+
+
+inline int PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
+inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
 inline void DrawTextShadow(const char* text, int x, int y, int fontSize, Color col, Color shadowCol) {
     DrawText(text, x + 1, y + 1, fontSize, shadowCol);
     DrawText(text, x, y, fontSize, col);
@@ -294,41 +318,24 @@ inline void DrawCrosshair(int x, int y, Color col) {
     DrawLine(x - 4, y, x + 4, y, col);
     DrawLine(x, y - 4, x, y + 4, col);
 }
+inline i32 imini(i32 a, i32 b) {return a < b ? a : b;}
 inline i32 iwrapi(i32 val, i32 min, i32 max) {
     i32 range = max - min;
 	return range == 0 ? min : min + ((((val - min) % range) + range) % range);
 }
-inline float ffractf(float val) {
-    return val - floorf(val);
-}
-inline float fclampf(float val, float min, float max) {
-    return fminf(fmaxf(val, min), max);
-}
-inline float fsignf(float val) {
-    return (float)(!signbit(val)) * 2.f - 1.f;
-}
-inline v2 v2fractv2(v2 v) {
-    return {ffractf(v.x), ffractf(v.y)};
-}
-inline v2 v2clampv2(v2 val, v2 min, v2 max) {
-    return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};
-}
-inline v2 v2maxv2(v2 a, v2 b) {
-    return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};
-}
-inline v2 v2minv2(v2 a, v2 b) {
-    return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};
-}
-inline float ApproachZero(float val, float amount) {
-    return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);
-}
+inline float ffractf(float val) {return val - floorf(val);}
+inline float fclampf(float val, float min, float max) {return fminf(fmaxf(val, min), max);}
+inline float fsignf(float val) {return (float)(!signbit(val)) * 2.f - 1.f;}
+inline v2 v2fractv2(v2 v) {return {ffractf(v.x), ffractf(v.y)};}
+inline v2 v2clampv2(v2 val, v2 min, v2 max) {return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};}
+inline v2 v2maxv2(v2 a, v2 b) {return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};}
+inline v2 v2minv2(v2 a, v2 b) {return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};}
+inline float ApproachZero(float val, float amount) {return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);}
 // NOTE: only supports up to 3 decimals
 inline float GetRandomValueF(float min, float max) {
     return ((float)GetRandomValue((i32)(min * 1000.f), (i32)(max * 1000.f))) / 1000.f;
 }
-inline bool GetRandomChanceF(float percentage) {
-    return GetRandomValueF(0.f, 100.f) < percentage;
-}
+inline bool GetRandomChanceF(float percentage) {return GetRandomValueF(0.f, 100.f) < percentage;}
 
 u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
@@ -596,10 +603,48 @@ void UnloadGameResources() {
     UnloadGameImages();
 }
 
+const i32 screenWidth = 1440;
+const i32 screenHeight = 800;
+
+i32 SceneSetup01(GameObject* goOut) {
+    i32 goCount = 0;
+
+    Typewriter tw = {};
+    tw.text = &global::dialogue[1];
+    tw.visible = false;
+    tw.textCount = 2;
+    tw.speed = 16.f;
+    tw.autoContinueDelay = 1.f;
+    tw.autoHideOnEndDelay = 3.f;
+    tw.x = screenWidth / 2;
+    tw.y = screenHeight / 2 + screenHeight / 4;
+    tw.textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
+    goOut[goCount] = TypewriterPack(&tw); goCount++;
+
+    Skybox skybox = {};
+    skybox.model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    skybox.shader = global::shaders[global::SHADER_SKYBOX];
+    {
+        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        i32 gammaValue = 0;
+        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        i32 vflippedValue = 0;
+        SetShaderValue(skybox.shader, GetShaderLocation(skybox.shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    }
+    skybox.model.materials[0].shader = skybox.shader;
+    skybox.model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        global::images[global::IMAGE_SKYBOX],
+        CUBEMAP_LAYOUT_AUTO_DETECT);
+    goOut[goCount] = SkyboxPack(&skybox); goCount++;
+
+    return goCount;
+};
+
+
 int main() {
     u32 freecam = 0; 
-    i32 screenWidth = 1440;
-    i32 screenHeight = 800;
+    
     SetTraceLogLevel(4);
     InitWindow(screenWidth, screenHeight, "Midnight Driver");
     SetTargetFPS(60);
@@ -609,6 +654,9 @@ int main() {
     LoadGameResources();
     InputInit(&global::input);
     InitSharedMaterials(sharedMaterials);
+
+    GameObject gameObject[GAME_OBJECT_MAX];
+    i32 gameObjectCount = SceneSetup01(gameObject);
 
     Camera camera = {};
     camera.fovy = 60.f;
@@ -624,21 +672,6 @@ int main() {
     camera.fovy = 60.f;
     camera.up = {0.f, 1.f, 0.f};
     float debugCameraSpeed = 0.1f;
-
-    Model skyboxModel = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    Shader skyboxShader = global::shaders[global::SHADER_SKYBOX];
-    {
-        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-        i32 gammaValue = 0;
-        SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-        i32 vflippedValue = 0;
-        SetShaderValue(skyboxShader, GetShaderLocation(skyboxShader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-    }
-    skyboxModel.materials[0].shader = skyboxShader;
-    skyboxModel.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        global::images[global::IMAGE_SKYBOX],
-        CUBEMAP_LAYOUT_AUTO_DETECT);
 
     v3 terrainSize = {1000.f, 100.f, 1000.f};
     v3 terrainPosition = terrainSize / -2.f;
@@ -666,46 +699,12 @@ int main() {
         global::models[global::MODEL_TREE].meshes[0],
         sharedMaterials[global::MATERIAL_UNLIT]);
 
-    // Model treeModel = global::models[global::MODEL_TREE];
-    // ForestGenerationInfo forestGenInfo = {};
-    // forestGenInfo.density = 0.6f;
-    // forestGenInfo.worldSize = {terrainSize.x, terrainSize.z};
-    // forestGenInfo.worldPosition = v2{terrainPosition.x, terrainPosition.z};
-    // forestGenInfo.treeChance = 90.f;
-    // forestGenInfo.randomPositionOffset = 0.25f;
-    // forestGenInfo.randomYDip = 0.f;
-    // forestGenInfo.randomTiltDegrees = 10.f;
-    // forestGenInfo.heightmap = &terrainHeightmap;
-    /*
-        TODO: Add a random color tint to the trees
-        TODO: Add a random texture to the trees
-        TODO: Add 3 different tree models
-        TODO: Add basic flora
-    */
-    // Material forestMaterial = sharedMaterials[global::MATERIAL_LIT_INSTANCED];
-    // forestMaterial.maps[MATERIAL_MAP_ALBEDO].texture = treeModel.materials[1].maps[MATERIAL_MAP_ALBEDO].texture;
-    // InstanceMeshRenderData forestImrd = ForestCreate(
-    //     global::images[global::IMAGE_TERRAINMAP],
-    //     forestGenInfo,
-    //     treeModel.meshes[0],
-    //     sharedMaterials[global::MATERIAL_LIT_INSTANCED]);
-
     TextDrawingStyle textDrawingStyle = {};
     textDrawingStyle.charSpacing = 1;
     textDrawingStyle.font = GetFontDefault();
     textDrawingStyle.size = 24.f;
     textDrawingStyle.color = WHITE;
-
-    Typewriter tw = {0};
-    tw.text = &global::dialogue[1];
-    tw.visible = false;
-    tw.textCount = 2;
-    tw.speed = 16.f;
-    tw.autoContinueDelay = 1.f;
-    tw.autoHideOnEndDelay = 3.f;
-    tw.x = screenWidth / 2;
-    tw.y = screenHeight / 2 + screenHeight / 4;
-    tw.textStyle = &textDrawingStyle;
+    global::groups["mainTextDrawingStyle"] = (void*)&textDrawingStyle;
 
     String dialogueOptionText[] = {
         StringCreate("Hello!"),
@@ -730,6 +729,12 @@ int main() {
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
+
+        for (int i = 0; i < gameObjectCount; i++) {
+            if (gameObject[i].Update != nullptr) {
+                gameObject[i].Update(gameObject[i].data);
+            }
+        }
 
         if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
             freecam = freecam ? 0 : 1;
@@ -756,16 +761,10 @@ int main() {
 
         UpdateGlobalMaterials(sharedMaterials, usingCamera->position);
 
-        TypewriterStep(&tw);
-
         BeginDrawing();
         ClearBackground(RAYWHITE);
         BeginMode3D(*usingCamera);
-            rlDisableBackfaceCulling();
-            rlDisableDepthMask();
-                DrawModel(skyboxModel, {0.f}, 1.0f, WHITE);
-            rlEnableBackfaceCulling();
-            rlEnableDepthMask();
+            
             DrawMeshInstancedOptimized(imrd.mesh, imrd.material, imrd.transforms, imrd.instanceCount);
             DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
@@ -773,7 +772,6 @@ int main() {
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
         EndMode3D();
-        TypewriterDraw(&tw);
         DialogueOptionsHandleInput(&dialogueOptions);
         DialogueOptionsDraw(&dialogueOptions);
         DrawFPS(4, 4);
@@ -788,6 +786,31 @@ int main() {
     ParticleSystemDestroy(&psys);
 
     return(0);
+}
+
+MemoryManager MemoryManagerCreate(i32 size) {
+    MemoryManager mm;
+    mm.buffer = calloc(size, sizeof(byte));
+    mm.location = 0;
+    mm.size = size;
+    return mm;
+}
+void MemoryManagerDestroy(MemoryManager* mm) {
+    if (mm->buffer != nullptr) {
+        free(mm->buffer);
+    }
+}
+void* MemoryManagerReserve(MemoryManager* mm, i32 size) {
+    if (mm->location + size >= mm->size) {
+        return nullptr;
+    }
+    void* reserve = (byte*)mm->buffer + mm->location;
+    mm->location += size;
+    if (mm->location % sizeof(void*) != 0) {
+        i32 alignedLocation = mm->location + (sizeof(void*) - (mm->location % sizeof(void*)));
+        mm->location = imini(alignedLocation, mm->size);
+    }
+    return reserve;
 }
 
 String StringCreate(char* text) {
@@ -828,9 +851,10 @@ void StringDestroy(String str) {
     }
 }
 
-i32 TypewriterStep(Typewriter *tw) {
+void TypewriterUpdate(void *_tw) {
+    Typewriter* tw = (Typewriter*)_tw;
     if (tw->text == nullptr) {
-        return 0;
+        return;
     }
 
     float length = (float)tw->text[tw->textIndex].length;
@@ -858,7 +882,6 @@ i32 TypewriterStep(Typewriter *tw) {
             }
         }
     }
-    return tw->progress == length;
 }
 void _TypewriterAdvanceText(Typewriter *tw) {
     if (tw->textIndex + 1 < tw->textCount) {
@@ -873,7 +896,8 @@ void _TypewriterReset(Typewriter *tw) {
     tw->textIndex = 0;
 }
 // TODO: optimize by only measuring text when the rendered string changes
-void TypewriterDraw(Typewriter *tw) {
+void TypewriterDraw(void* _tw) {
+    Typewriter* tw = (Typewriter*)_tw;
     if (!tw->visible || tw->text == nullptr) {
         return;
     }
@@ -882,6 +906,14 @@ void TypewriterDraw(Typewriter *tw) {
     v2 textAlign = MeasureTextEx(textStyle->font, substr.cstr, textStyle->size, textStyle->charSpacing) / 2.f;
     DrawTextPro(textStyle->font, substr.cstr, {(float)tw->x, (float)tw->y}, textAlign, 0.f, 18.f, 1.f, WHITE);
     StringDestroy(substr);
+}
+
+GameObject TypewriterPack(Typewriter* tw) {
+    GameObject go;
+    go.data = (void*)tw;
+    go.Update = TypewriterUpdate;
+    go.Draw = TypewriterDraw;
+    return go;
 }
 
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions) {
@@ -1275,6 +1307,22 @@ v3 GetCameraRightNorm(Camera *camera) {
     v3 forward = GetCameraForwardNorm(camera);
     v3 up = GetCameraUpNorm(camera);
     return Vector3Normalize(Vector3CrossProduct(forward, up));
+}
+
+void SkyboxDraw(void* _skybox) {
+    Skybox* skybox = (Skybox*)_skybox;
+    rlDisableBackfaceCulling();
+    rlDisableDepthMask();
+        DrawModel(skybox->model, {0.f}, 1.0f, WHITE);
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+}
+GameObject SkyboxPack(Skybox* skybox) {
+    GameObject go;
+    go.data = (void*)skybox;
+    go.Draw = SkyboxDraw;
+    go.Update = nullptr;
+    return go;
 }
 
 Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material) {
