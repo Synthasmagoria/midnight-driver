@@ -94,8 +94,9 @@ void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
 
 struct DialogueOptions {
-    List *options;
+    String* options;
     i32 index;
+    i32 number;
     i32 x;
     i32 y;
     float optionSeparationAdd;
@@ -105,7 +106,9 @@ struct DialogueOptions {
     Texture2D npatchTexture;
 };
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
-void DialogueOptionsDraw(DialogueOptions* dialogueOptions);
+void DialogueOptionsUpdate(void* _dopt);
+void DialogueOptionsDraw(void* _dopt);
+GameObject DialogueOptionsPack(DialogueOptions* dopt);
 
 struct TextDrawingStyle {
     Color color;
@@ -215,7 +218,7 @@ struct BillboardParticleSystem {
     float life;
     QuadraticBezier alphaCurve;
     BillboardParticle particles[MAX_BILLBOARD_PARTICLES];
-    int blendMode;
+    i32 blendMode;
     float _spawnTimer;
     u32 _number;
     u32 _index;
@@ -258,9 +261,11 @@ struct Heightmap {
     Model debugModel;
     u32 width;
 };
-Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material);
+void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
-void HeightmapDestroy(Heightmap heightmap);
+void HeightmapDraw(void* hm);
+void HeightmapFree(void* hm);
+GameObject HeightmapPack(Heightmap* hm);
 
 struct Cab {
     Model model;
@@ -296,9 +301,12 @@ v3 GetCameraRightNorm(Camera *camera);
 
 struct GameObject {
     void (*Update) (void*);
-    void (*Draw) (void*);
+    void (*Draw3d) (void*);
+    void (*DrawUi) (void*);
+    void (*Free) (void*);
     void *data;
 };
+GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
 
 struct Skybox {
     Model model;
@@ -307,14 +315,13 @@ struct Skybox {
 void SkyboxDraw(void* _skybox);
 GameObject SkyboxPack(Skybox* skybox);
 
-
-inline int PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
+inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
 inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
-inline void DrawTextShadow(const char* text, int x, int y, int fontSize, Color col, Color shadowCol) {
+inline void DrawTextShadow(const char* text, i32 x, i32 y, i32 fontSize, Color col, Color shadowCol) {
     DrawText(text, x + 1, y + 1, fontSize, shadowCol);
     DrawText(text, x, y, fontSize, col);
 }
-inline void DrawCrosshair(int x, int y, Color col) {
+inline void DrawCrosshair(i32 x, i32 y, Color col) {
     DrawLine(x - 4, y, x + 4, y, col);
     DrawLine(x, y - 4, x, y + 4, col);
 }
@@ -349,7 +356,7 @@ u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
 }
 BoundingBox GenBoundingBoxMesh(Mesh mesh) {
     v2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
-    for (int i = 0; i < mesh.vertexCount; i+=3) {
+    for (i32 i = 0; i < mesh.vertexCount; i+=3) {
         float* cv = mesh.vertices + i;
         xbounds.x = fminf(*cv, xbounds.x);
         xbounds.y = fmaxf(*cv, xbounds.y);
@@ -360,11 +367,11 @@ BoundingBox GenBoundingBoxMesh(Mesh mesh) {
     }
     return {{xbounds.x, ybounds.x, zbounds.x}, {xbounds.y, ybounds.y, zbounds.y}};
 }
-BoundingBox GenBoundingBoxMeshes(Mesh* meshes, int meshCount) {
+BoundingBox GenBoundingBoxMeshes(Mesh* meshes, i32 meshCount) {
     v2 xbounds = {0.f}, ybounds = {0.f}, zbounds = {0.f};
-    for (int i = 0; i < meshCount; i++) {
+    for (i32 i = 0; i < meshCount; i++) {
         Mesh *mesh = meshes + i;
-        for (int j = 0; j < mesh->vertexCount; j+=3) {
+        for (i32 j = 0; j < mesh->vertexCount; j+=3) {
             float* cv = mesh->vertices + j;
             xbounds.x = fminf(*cv, xbounds.x);
             xbounds.y = fmaxf(*cv, xbounds.y);
@@ -444,6 +451,7 @@ namespace global {
         MATERIAL_LIT_TERRAIN,
         MATERIAL_COUNT
     };
+    Material materials[MATERIAL_COUNT];
 
     enum GAME_MODELS {
         MODEL_CAB,
@@ -496,6 +504,13 @@ namespace global {
        StringCreate("Second sentence hits harder than the first for some reason"),
        StringCreate("Holy fuck there's a third")
     };
+
+    const i32 dialogueOptionsCount = 3;
+    String dialogueOptions[dialogueOptionsCount] = {
+        StringCreate("Hello!"),
+        StringCreate("What can I do for you?"),
+        StringCreate("Want a cigarette?")
+    };
 }
 
 void LoadGameShaders() {
@@ -509,7 +524,7 @@ void UnloadGameShaders() {
     }
 }
 
-void InitSharedMaterials(Material* materials) {
+void LoadGameMaterials() {
     Shader sh;
     Material mat;
     
@@ -517,44 +532,49 @@ void InitSharedMaterials(Material* materials) {
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[global::MATERIAL_LIT_INSTANCED] = mat;
+    global::materials[global::MATERIAL_LIT_INSTANCED] = mat;
 
     sh = LOAD_SHADER("light.vs", "light.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[global::MATERIAL_LIT] = mat;
+    global::materials[global::MATERIAL_LIT] = mat;
 
     sh = LOAD_SHADER("unlitInstanced.vs", "passthrough.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[global::MATERIAL_UNLIT] = mat;
+    global::materials[global::MATERIAL_UNLIT] = mat;
 
     sh = LOAD_SHADER("light.vs", "lightTerrain.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    materials[global::MATERIAL_LIT_TERRAIN] = mat;
+    global::materials[global::MATERIAL_LIT_TERRAIN] = mat;
 }
-void UpdateGlobalMaterials(Material *materials, v3 lightPosition) {
+void UpdateGameMaterials(v3 lightPosition) {
     float pos[3] = {lightPosition.x, lightPosition.y, lightPosition.z};
     SetShaderValue(
-        materials[global::MATERIAL_LIT_INSTANCED].shader,
-        GetShaderLocation(materials[global::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
+        global::materials[global::MATERIAL_LIT_INSTANCED].shader,
+        GetShaderLocation(global::materials[global::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
     SetShaderValue(
-        materials[global::MATERIAL_LIT].shader,
-        GetShaderLocation(materials[global::MATERIAL_LIT].shader, "lightPosition"),
+        global::materials[global::MATERIAL_LIT].shader,
+        GetShaderLocation(global::materials[global::MATERIAL_LIT].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
     SetShaderValue(
-        materials[global::MATERIAL_LIT_TERRAIN].shader,
-        GetShaderLocation(materials[global::MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
+        global::materials[global::MATERIAL_LIT_TERRAIN].shader,
+        GetShaderLocation(global::materials[global::MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
         (void*)pos,
         SHADER_UNIFORM_VEC3);
+}
+void UnloadGameMaterials() {
+    for (i32 i = 0; i < global::MATERIAL_COUNT; i++) {
+        UnloadMaterial(global::materials[i]);
+    }
 }
 
 void LoadGameModels() {
@@ -595,12 +615,14 @@ void LoadGameResources() {
     LoadGameModels();
     LoadGameTextures();
     LoadGameImages();
+    LoadGameMaterials();
 }
 void UnloadGameResources() {
     UnloadGameShaders();
     UnloadGameModels();
     UnloadGameTextures();
     UnloadGameImages();
+    UnloadGameMaterials();
 }
 
 const i32 screenWidth = 1440;
@@ -608,6 +630,22 @@ const i32 screenHeight = 800;
 
 i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     i32 goCount = 0;
+
+    v3 terrainSize = {1000.f, 100.f, 1000.f};
+    v3 terrainPosition = terrainSize / -2.f;
+    terrainPosition.y = 0.f;
+
+    HeightmapGenerationInfo hgi = {};
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
+    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
+    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
+    hgi.position = terrainPosition;
+    hgi.size = terrainSize;
+    hgi.resdiv = 2;
+    Heightmap* hm = (Heightmap*)MemoryManagerReserve(mm, sizeof(Heightmap));
+    HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
+    global::groups["terrainHeightmap"] = (void*)&hm;
+    goOut[goCount] = HeightmapPack(hm); goCount++;
 
     Typewriter* tw = (Typewriter*)MemoryManagerReserve(mm, sizeof(Typewriter));
     tw->text = &global::dialogue[1];
@@ -620,6 +658,19 @@ i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     tw->y = screenHeight / 2 + screenHeight / 4;
     tw->textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
     goOut[goCount] = TypewriterPack(tw); goCount++;
+
+    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryManagerReserve(mm, sizeof(DialogueOptions));
+    dialogueOptions->index = 0;
+    dialogueOptions->options = &global::dialogueOptions[0];
+    dialogueOptions->number = 3;
+    dialogueOptions->x = screenWidth / 2;
+    dialogueOptions->y = screenHeight / 2 + screenHeight / 4;
+    dialogueOptions->textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
+    dialogueOptions->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
+    dialogueOptions->npatchTexture = global::textures[global::TEXTURE_NPATCH];
+    dialogueOptions->optionBoxHeightAdd = 32.f;
+    dialogueOptions->optionSeparationAdd = 48.f;
+    goOut[goCount] = DialogueOptionsPack(dialogueOptions); goCount++;
 
     Skybox* skybox = (Skybox*)MemoryManagerReserve(mm, sizeof(Skybox));
     skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
@@ -642,7 +693,7 @@ i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
 };
 
 
-int main() {
+i32 main() {
     u32 freecam = 0; 
     
     SetTraceLogLevel(4);
@@ -652,10 +703,15 @@ int main() {
 
     MemoryManager memoryManager = MemoryManagerCreate(1 << 16);
 
-    Material sharedMaterials[global::MATERIAL_COUNT];
     LoadGameResources();
     InputInit(&global::input);
-    InitSharedMaterials(sharedMaterials);
+
+    TextDrawingStyle textDrawingStyle = {};
+    textDrawingStyle.charSpacing = 1;
+    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.size = 24.f;
+    textDrawingStyle.color = WHITE;
+    global::groups["mainTextDrawingStyle"] = (void*)&textDrawingStyle;
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
@@ -679,17 +735,7 @@ int main() {
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
-    HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
-    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
-    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
-    hgi.position = terrainPosition;
-    hgi.size = terrainSize;
-    hgi.resdiv = 2;
-    Heightmap terrainHeightmap = HeightmapCreate(hgi, sharedMaterials[global::MATERIAL_LIT_TERRAIN]);
-    global::groups["terrainHeightmap"] = (void*)&terrainHeightmap;
-
-    ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], sharedMaterials[global::MATERIAL_UNLIT]);
+    ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
     psys.velocity = {1.f, 0.f, 0.f};
 
     ForestGenerationInfo forestInfo = {};
@@ -699,40 +745,12 @@ int main() {
         global::images[global::IMAGE_TERRAINMAP_TEST],
         forestInfo,
         global::models[global::MODEL_TREE].meshes[0],
-        sharedMaterials[global::MATERIAL_UNLIT]);
-
-    TextDrawingStyle textDrawingStyle = {};
-    textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = GetFontDefault();
-    textDrawingStyle.size = 24.f;
-    textDrawingStyle.color = WHITE;
-    global::groups["mainTextDrawingStyle"] = (void*)&textDrawingStyle;
-
-    String dialogueOptionText[] = {
-        StringCreate("Hello!"),
-        StringCreate("What can I do for you?"),
-        StringCreate("Want a cigarette?")
-    };
-    List dialogueOptionsList = ListCreate(3);
-    for (i32 i = 0; i < 3; i++) {
-        ListSet(&dialogueOptionsList, i, (void*)&dialogueOptionText[i]);
-    }
-
-    DialogueOptions dialogueOptions = {};
-    dialogueOptions.index = 0;
-    dialogueOptions.options = &dialogueOptionsList;
-    dialogueOptions.x = screenWidth / 2;
-    dialogueOptions.y = screenHeight / 2 + screenHeight / 4;
-    dialogueOptions.textStyle = &textDrawingStyle;
-    dialogueOptions.npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
-    dialogueOptions.npatchTexture = global::textures[global::TEXTURE_NPATCH];
-    dialogueOptions.optionBoxHeightAdd = 32.f;
-    dialogueOptions.optionSeparationAdd = 48.f;
+        global::materials[global::MATERIAL_UNLIT]);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
 
-        for (int i = 0; i < gameObjectCount; i++) {
+        for (i32 i = 0; i < gameObjectCount; i++) {
             if (gameObject[i].Update != nullptr) {
                 gameObject[i].Update(gameObject[i].data);
             }
@@ -761,25 +779,27 @@ int main() {
             usingCamera = &camera;
         }
 
-        UpdateGlobalMaterials(sharedMaterials, usingCamera->position);
+        UpdateGameMaterials(usingCamera->position);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
         BeginMode3D(*usingCamera);
-            for (int i = 0; i < gameObjectCount; i++) {
-                if (gameObject[i].Draw != nullptr) {
-                    gameObject[i].Draw(gameObject[i].data);
+            for (i32 i = 0; i < gameObjectCount; i++) {
+                if (gameObject[i].Draw3d != nullptr) {
+                    gameObject[i].Draw3d(gameObject[i].data);
                 }
             }
             DrawMeshInstancedOptimized(imrd.mesh, imrd.material, imrd.transforms, imrd.instanceCount);
-            DrawModel(terrainHeightmap.model, terrainHeightmap.position, 1.f, WHITE);
             CabDraw(&cab);
             ParticleSystemStep(&psys);
             ParticleSystemDraw(&psys);
             DrawGrid(20, 1.f);
         EndMode3D();
-        DialogueOptionsHandleInput(&dialogueOptions);
-        DialogueOptionsDraw(&dialogueOptions);
+        for (i32 i = 0; i < gameObjectCount; i++) {
+            if (gameObject[i].DrawUi != nullptr) {
+                gameObject[i].DrawUi(gameObject[i].data);
+            }
+        }
         DrawFPS(4, 4);
         if (freecam) {
             DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
@@ -787,6 +807,8 @@ int main() {
         DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
         EndDrawing();
     }
+
+    
 
     MemoryManagerDestroy(&memoryManager);
     UnloadGameResources();
@@ -919,27 +941,33 @@ GameObject TypewriterPack(Typewriter* tw) {
     GameObject go;
     go.data = (void*)tw;
     go.Update = TypewriterUpdate;
-    go.Draw = TypewriterDraw;
+    go.Draw3d = nullptr;
+    go.DrawUi = TypewriterDraw;
     return go;
 }
 
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions) {
     i32 input = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
-    dialogueOptions->index = iwrapi(dialogueOptions->index + input, 0, dialogueOptions->options->size);
+    dialogueOptions->index = iwrapi(dialogueOptions->index + input, 0, dialogueOptions->number);
 }
-void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
-    List* options = dialogueOptions->options;
+void DialogueOptionsUpdate(void* _dopt) {
+    DialogueOptions* dopt = (DialogueOptions*)_dopt;
+    DialogueOptionsHandleInput(dopt);
+}
+void DialogueOptionsDraw(void *_dopt) {
+    DialogueOptions* dialogueOptions = (DialogueOptions*)_dopt;
+    String* options = dialogueOptions->options;
     TextDrawingStyle* textStyle = dialogueOptions->textStyle;
-    v2* textSize = (v2*)malloc(options->size * sizeof(v2));
+    v2* textSize = (v2*)malloc(dialogueOptions->number * sizeof(v2));
     v2 boxSize = {0.f, 0.f};
     // TODO: These measurements can be done as preprocessing. No need for the memory allocation every fucking frame
-    for (i32 i = 0; i < options->size; i++) {
-        String *option = (String*)ListGet(options, i);
-        textSize[i] = MeasureTextEx(textStyle->font, option->cstr, textStyle->size, textStyle->charSpacing);
+    for (i32 i = 0; i < dialogueOptions->number; i++) {
+        String option = dialogueOptions->options[i];
+        textSize[i] = MeasureTextEx(textStyle->font, option.cstr, textStyle->size, textStyle->charSpacing);
         boxSize = v2maxv2(boxSize, textSize[i]);
     }
     boxSize.x += 64.f;
-    for (i32 i = 0; i < options->size; i++) {
+    for (i32 i = 0; i < dialogueOptions->number; i++) {
         Color textTint = GRAY;
         Color boxTint = GRAY;
         if (i == dialogueOptions->index) {
@@ -947,7 +975,7 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
             boxTint = WHITE;
         }
 
-        String *option = (String*)ListGet(options, i);
+        String option = dialogueOptions->options[i];
         i32 x = dialogueOptions->x;
         i32 y = dialogueOptions->y + i * ((i32)textStyle->size + dialogueOptions->optionSeparationAdd);
         float xf = (float)x;
@@ -967,7 +995,7 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
             boxTint);
         DrawTextPro(
             textStyle->font,
-            option->cstr,
+            option.cstr,
             {xf, yf},
             textSize[i] / 2.0,
             0.f,
@@ -976,6 +1004,14 @@ void DialogueOptionsDraw(DialogueOptions *dialogueOptions) {
             textTint);
     }
     free(textSize);
+}
+GameObject DialogueOptionsPack(DialogueOptions* dopt) {
+    GameObject go = {0};
+    go.data = (void*)dopt;
+    go.Draw3d = nullptr;
+    go.DrawUi = DialogueOptionsDraw;
+    go.Update = DialogueOptionsUpdate;
+    return go;
 }
 
 void InputInit(Input *input) {
@@ -1325,14 +1361,25 @@ void SkyboxDraw(void* _skybox) {
     rlEnableDepthMask();
 }
 GameObject SkyboxPack(Skybox* skybox) {
-    GameObject go;
+    GameObject go = {};
     go.data = (void*)skybox;
-    go.Draw = SkyboxDraw;
+    go.Draw3d = SkyboxDraw;
+    go.DrawUi = nullptr;
     go.Update = nullptr;
     return go;
 }
 
-Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material) {
+GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void*), void(*drawUi)(void*), void(*free)(void*)) {
+    GameObject go = {};
+    go.data = data;
+    go.Update = update;
+    go.Draw3d = draw3d;
+    go.DrawUi = drawUi;
+    go.Free = free;
+    return go;
+}
+
+void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
     const u32 resdiv = info.resdiv;
     const Image *image = info.heightmapImage;
     const u32 stride = PixelformatGetStride(image->format);
@@ -1353,20 +1400,18 @@ Heightmap HeightmapCreate(HeightmapGenerationInfo info, Material material) {
     }
 
     Mesh hmMesh = GenMeshHeightmap(*image, info.size);
-    Heightmap heightmap = {};
-    heightmap.heightData = heightData;
-    heightmap.heightmap = *image;
-    heightmap.heightDataWidth = heightDataWidth;
-    heightmap.heightDataHeight = heightDataHeight;
-    heightmap.size = info.size;
-    heightmap.texture = *info.terrainMapTexture;
-    heightmap.model = LoadModelFromMesh(hmMesh);
-    heightmap.model.materials[0] = material;
-    heightmap.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
-    heightmap.model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
-    heightmap.position = info.position;
-    heightmap.debugModel = {};
-    return heightmap;
+    hm->heightData = heightData;
+    hm->heightmap = *image;
+    hm->heightDataWidth = heightDataWidth;
+    hm->heightDataHeight = heightDataHeight;
+    hm->size = info.size;
+    hm->texture = *info.terrainMapTexture;
+    hm->model = LoadModelFromMesh(hmMesh);
+    hm->model.materials[0] = material;
+    hm->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
+    hm->model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
+    hm->position = info.position;
+    hm->debugModel = {};
 }
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     v2 rectBegin = {heightmap.position.x, heightmap.position.z};
@@ -1389,8 +1434,15 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     }
     return 0.f;
 }
-void HeightmapDestroy(Heightmap heightmap) {
-    free(heightmap.heightData);
+void HeightmapFree(void* heightmap) {
+    free(((Heightmap*)heightmap)->heightData);
+}
+void HeightmapDraw(void* _hm) {
+    Heightmap* hm = (Heightmap*)_hm;
+    DrawModel(hm->model, hm->position, 1.f, WHITE);
+}
+GameObject HeightmapPack(Heightmap* hm) {
+    return GameObjectCreate(hm, nullptr, HeightmapDraw, nullptr, HeightmapFree);
 }
 
 List ListCreate(u32 size) {
