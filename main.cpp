@@ -69,7 +69,7 @@ struct GameObject {
     void (*Draw3d) (void*);
     void (*DrawUi) (void*);
     void (*Free) (void*);
-    void *data;
+    void* data;
 };
 GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
 
@@ -79,13 +79,13 @@ struct List {
     u32 capacity;
 };
 List ListCreate(u32 size);
-void ListInit(List *list, u32 size);
-void ListDestroy(List *list);
-void ListResize(List *list, u32 size);
-void ListChangeCapacity(List *list, u32 capacity);
-void* ListGet(List *list, u32 ind);
-void ListSet(List *list, u32 ind, void* val);
-void ListPushBack(List *list, void* val);
+void ListInit(List* list, u32 size);
+void ListDestroy(List* list);
+void ListResize(List* list, u32 size);
+void ListChangeCapacity(List* list, u32 capacity);
+void* ListGet(List* list, u32 ind);
+void ListSet(List* list, u32 ind, void* val);
+void ListPushBack(List* list, void* val);
 
 struct String {
     char* cstr;
@@ -179,8 +179,8 @@ struct Input {
     i32 down[INPUT_COUNT];
     i32 up[INPUT_COUNT];
 };
-void InputInit(Input *input);
-void InputUpdate(Input *input);
+void InputInit(Input* input);
+void InputUpdate(Input* input);
 
 // TODO: Removed deprecated
 struct ForestGenerationInfo {
@@ -247,9 +247,9 @@ struct ParticleSystem {
     i32 count;
 };
 void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material);
-void ParticleSystemFree(void *psys);
-void ParticleSystemUpdate(void *psys);
-void ParticleSystemDraw(void *psys);
+void ParticleSystemFree(void* psys);
+void ParticleSystemUpdate(void* psys);
+void ParticleSystemDraw(void* psys);
 GameObject ParticleSystemPack(ParticleSystem *psys);
 
 struct BillboardParticle {
@@ -345,14 +345,14 @@ struct CameraManager {
 };
 void CameraManagerInit(CameraManager* camMan, Camera playerCamera);
 void CameraManagerUpdate(void* _camMan);
-void CameraManagerDrawUi(void *_camMan);
+void CameraManagerDrawUi(void* _camMan);
 GameObject CameraManagerPack(CameraManager* camMan);
 
-void CameraUpdateDebug(Camera *camera, float speed);
-void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle);
-v3 GetCameraForwardNorm(Camera *camera);
-v3 GetCameraUpNorm(Camera *camera);
-v3 GetCameraRightNorm(Camera *camera);
+void CameraUpdateDebug(Camera* camera, float speed);
+void CameraUpdate(Camera* camera, v3 position, v2 rotationAdd, v3 viewMiddle);
+v3 GetCameraForwardNorm(Camera* camera);
+v3 GetCameraUpNorm(Camera* camera);
+v3 GetCameraRightNorm(Camera* camera);
 Camera CameraGetDefault();
 
 inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
@@ -384,7 +384,7 @@ inline float GetRandomValueF(float min, float max) {
 }
 inline bool GetRandomChanceF(float percentage) {return GetRandomValueF(0.f, 100.f) < percentage;}
 
-u32 Fnv32Buf(void *buf, u64 len, u32 hval) {
+u32 Fnv32Buf(void* buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
     byte *be = bp + len;
     while (bp < be) {
@@ -816,7 +816,7 @@ void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
     tw->y = screenHeight / 2 + screenHeight / 4;
     tw->textStyle = &global::textDrawingStyle;
 }
-void TypewriterUpdate(void *_tw) {
+void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
     if (tw->text == nullptr) {
         return;
@@ -897,7 +897,7 @@ void DialogueOptionsUpdate(void* _dopt) {
     DialogueOptions* dopt = (DialogueOptions*)_dopt;
     DialogueOptionsHandleInput(dopt);
 }
-void DialogueOptionsDraw(void *_dopt) {
+void DialogueOptionsDraw(void* _dopt) {
     DialogueOptions* dialogueOptions = (DialogueOptions*)_dopt;
     String* options = dialogueOptions->options;
     TextDrawingStyle* textStyle = dialogueOptions->textStyle;
@@ -993,7 +993,7 @@ GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
 }
 
-void InputInit(Input *input) {
+void InputInit(Input* input) {
     input->map[INPUT_ACCELERATE] = KEY_SPACE;
     input->map[INPUT_BREAK] = KEY_LEFT_SHIFT;
     input->map[INPUT_LEFT] = KEY_LEFT;
@@ -1008,7 +1008,7 @@ void InputInit(Input *input) {
     input->map[INPUT_DEBUG_UP] = KEY_Q;
     input->map[INPUT_DEBUG_DOWN] = KEY_E;
 }
-void InputUpdate(Input *input) {
+void InputUpdate(Input* input) {
     for (i32 i = 0; i < INPUT_COUNT; i++) {
         input->pressed[i] = IsKeyPressed(input->map[i]);
         input->down[i] = IsKeyDown(input->map[i]);
@@ -1071,7 +1071,7 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
     const i32 pixelStride = PixelformatGetStride(image.format);
     const i32 pixelCount = image.width * image.height;
     byte* imageData = (byte*)image.data;
-    mat4 *transforms = (mat4*)RL_CALLOC(pixelCount, sizeof(mat4));
+    mat4* transforms = (mat4*)RL_CALLOC(pixelCount, sizeof(mat4));
     i32 transformCount = 0;
     v2 imageSize = {(float)image.width, (float)image.height};
     for (i32 i = 0; i < pixelCount; i++) {
@@ -1137,7 +1137,7 @@ void ParticleSystemFree(void* _psys) {
     UnloadMesh(psys->_quad);
     RL_FREE(psys->_transforms);
 }
-void ParticleSystemUpdate(void *_psys) {
+void ParticleSystemUpdate(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
     v3 stepVelocity = psys->velocity * FRAME_TIME;
     mat4 transpose = MatrixTranslate(stepVelocity.x, stepVelocity.y, stepVelocity.z);
@@ -1145,7 +1145,7 @@ void ParticleSystemUpdate(void *_psys) {
         psys->_transforms[i] *= transpose;
     }
 }
-void ParticleSystemDraw(void *_psys) {
+void ParticleSystemDraw(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
 }
@@ -1165,7 +1165,7 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
         }
     }
 
-    BillboardParticle *parts[MAX_BILLBOARD_PARTICLES] = {NULL};
+    BillboardParticle *parts[MAX_BILLBOARD_PARTICLES] = {nullptr};
     float dists[MAX_BILLBOARD_PARTICLES] = {-1.f};
     v2 cameraPosition = {camera.position.x, camera.position.z};
     v2 cameraTarget = {camera.target.x, camera.target.z};
@@ -1182,7 +1182,7 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
 
     // TODO: Sort from camera tangent line instead of position to fix clipping
     // TODO: Make max particles settable
-    BillboardParticle *sortedParts[MAX_BILLBOARD_PARTICLES] = {NULL};
+    BillboardParticle *sortedParts[MAX_BILLBOARD_PARTICLES] = {nullptr};
     float sortedDists[MAX_BILLBOARD_PARTICLES] = {1.f};
     sortedParts[0] = parts[0];
     sortedDists[0] = dists[0];
@@ -1329,7 +1329,7 @@ void CameraManagerUpdate(void* _camMan) {
 
     v2 mouseScroll = GetMouseWheelMoveV();
     camMan->debugCameraSpeed = fclampf(camMan->debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
-    Camera *usingCamera;
+    Camera* usingCamera;
     if (camMan->cameraMode) {
         CameraUpdateDebug(&camMan->debugCamera, camMan->debugCameraSpeed);
         usingCamera = &camMan->debugCamera;
@@ -1339,7 +1339,7 @@ void CameraManagerUpdate(void* _camMan) {
         usingCamera = &camMan->playerCamera;
     }
 }
-void CameraManagerDrawUi(void *_camMan) {
+void CameraManagerDrawUi(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
     if (camMan->cameraMode == 1) {
         DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
@@ -1356,7 +1356,7 @@ GameObject CameraManagerPack(CameraManager* camMan) {
     return GameObjectCreate(camMan, CameraManagerUpdate, nullptr, CameraManagerDrawUi, CameraManagerFree);
 }
 
-void CameraUpdateDebug(Camera *camera, float speed) {
+void CameraUpdateDebug(Camera* camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
     float sensitivity = 0.002f;
     v2 mouseDelta = GetMouseDelta();
@@ -1376,7 +1376,7 @@ void CameraUpdateDebug(Camera *camera, float speed) {
     camera->position.y += input.y * speed;
     camera->target = camera->position + targetDirection;
 }
-void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
+void CameraUpdate(Camera* camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     v3 target = Vector3Normalize(camera->target - camera->position);
     v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
     v2 mouseRotationStep = GetMouseDelta() * FRAME_TIME * -0.05f;
@@ -1389,13 +1389,13 @@ void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     camera->position = position;
     camera->target = camera->position + target * rot;
 }
-v3 GetCameraForwardNorm(Camera *camera) {
+v3 GetCameraForwardNorm(Camera* camera) {
     return Vector3Normalize(camera->target - camera->position);
 }
-v3 GetCameraUpNorm(Camera *camera) {
+v3 GetCameraUpNorm(Camera* camera) {
     return Vector3Normalize(camera->up);
 }
-v3 GetCameraRightNorm(Camera *camera) {
+v3 GetCameraRightNorm(Camera* camera) {
     v3 forward = GetCameraForwardNorm(camera);
     v3 up = GetCameraUpNorm(camera);
     return Vector3Normalize(Vector3CrossProduct(forward, up));
@@ -1438,15 +1438,15 @@ void ListInit(List* list, u32 size) {
     }
     list->capacity = list->size;
 }
-void ListDestroy(List *list) {
-    if (list->data != NULL) {
+void ListDestroy(List* list) {
+    if (list->data != nullptr) {
         free(list->data);
-        list->data = NULL;
+        list->data = nullptr;
         list->size = 0;
     }
 }
-void ListResize(List *list, u32 size) {
-    if (list->data != NULL) {
+void ListResize(List* list, u32 size) {
+    if (list->data != nullptr) {
         list->data = (void**)realloc(list->data, sizeof(void*) * size);
     } else {
         list->data = (void**)malloc(sizeof(void*) * size);
@@ -1458,25 +1458,25 @@ void ListResize(List *list, u32 size) {
     list->capacity = size;
     list->size = size;
 }
-void ListChangeCapacity(List *list, u32 capacity) {
-    if (list->data != NULL) {
+void ListChangeCapacity(List* list, u32 capacity) {
+    if (list->data != nullptr) {
         list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
     } else {
         list->data = (void**)malloc(sizeof(void*) * capacity);
     }
     list->capacity = capacity;
 }
-void* ListGet(List *list, u32 ind) {
+void* ListGet(List* list, u32 ind) {
     if (ind >= list->size && ind < list->capacity) {
         TraceLog(LOG_ERROR, "List: Tried getting value outside of size in list, returned '-1'");
-        return NULL;
+        return nullptr;
     }
     return list->data[ind];
 }
-void ListSet(List *list, u32 ind, void* val) {
+void ListSet(List* list, u32 ind, void* val) {
     list->data[ind] = val;
 }
-void ListPushBack(List *list, void* val) {
+void ListPushBack(List* list, void* val) {
     if (list->capacity == list->size) {
         if (list->capacity == 0) {
             ListChangeCapacity(list, 8 * sizeof(void*));
@@ -1735,7 +1735,7 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
         }
 #endif
 
-        if (mesh.indices != NULL) rlEnableVertexBufferElement(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_INDICES]);
+        if (mesh.indices != nullptr) rlEnableVertexBufferElement(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_INDICES]);
     }
 
     int eyeCount = 1;
@@ -1757,7 +1757,7 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
         rlSetUniformMatrix(material.shader.locs[SHADER_LOC_MATRIX_MVP], matModelViewProjection);
 
         // Draw mesh instanced
-        if (mesh.indices != NULL) rlDrawVertexArrayElementsInstanced(0, mesh.triangleCount*3, 0, instances);
+        if (mesh.indices != nullptr) rlDrawVertexArrayElementsInstanced(0, mesh.triangleCount*3, 0, instances);
         else rlDrawVertexArrayInstanced(0, mesh.vertexCount, instances);
     }
 
