@@ -32,6 +32,7 @@ typedef Vector2 v2;
 #define GAME_OBJECT_MAX 1000
 
 struct MemoryManager;
+struct GameObject;
 struct String;
 struct Typewriter;
 struct DialogueOptions;
@@ -48,8 +49,8 @@ struct List;
 struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
-struct GameObject;
 struct Skybox;
+struct CameraManager;
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
@@ -61,6 +62,15 @@ struct MemoryManager {
 MemoryManager MemoryManagerCreate(i32 size);
 void MemoryManagerDestroy(MemoryManager* mm);
 void* MemoryManagerReserve(MemoryManager* mm, i32 size);
+
+struct GameObject {
+    void (*Update) (void*);
+    void (*Draw3d) (void*);
+    void (*DrawUi) (void*);
+    void (*Free) (void*);
+    void *data;
+};
+GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
 
 struct String {
     char* cstr;
@@ -182,6 +192,13 @@ struct InstanceMeshRenderDataBlocks {
 };
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
+void ForestDraw(void* _imrd) {
+    InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
+    DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
+}
+GameObject ForestPack(InstanceMeshRenderData* forest) {
+    return GameObjectCreate((void*)forest, nullptr, nullptr, nullptr, ForestDraw);
+}
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // https://www.desmos.com/calculator/scz7zhonfw
@@ -199,10 +216,11 @@ struct ParticleSystem {
     v3 velocity;
     i32 count;
 };
-ParticleSystem ParticleSystemCreate(Texture texture, Material material);
-void ParticleSystemDestroy(ParticleSystem *psys);
-void ParticleSystemStep(ParticleSystem *psys);
-void ParticleSystemDraw(ParticleSystem *psys);
+void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material);
+void ParticleSystemFree(void *psys);
+void ParticleSystemUpdate(void *psys);
+void ParticleSystemDraw(void *psys);
+GameObject ParticleSystemPack(ParticleSystem *psys);
 
 struct BillboardParticle {
     v3 position;
@@ -288,25 +306,13 @@ struct Cab {
     mat4 _transform;
     float _turnAngle;
 };
-void CabInit(Cab *cab);
-void CabUpdate(Cab *cab);
-void CabDraw(Cab *cab);
-v3 CabGetFrontSeatPosition(Cab *cab);
+void CabInit(Cab* cab);
+void CabUpdate(void* cab);
+void CabDraw(void* cab);
+v3 CabGetFrontSeatPosition(Cab* cab);
+GameObject CabPack(Cab* cab);
 
-void CameraUpdateDebug(Camera *camera, float speed);
-void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle);
-v3 GetCameraForwardNorm(Camera *camera);
-v3 GetCameraUpNorm(Camera *camera);
-v3 GetCameraRightNorm(Camera *camera);
 
-struct GameObject {
-    void (*Update) (void*);
-    void (*Draw3d) (void*);
-    void (*DrawUi) (void*);
-    void (*Free) (void*);
-    void *data;
-};
-GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
 
 struct Skybox {
     Model model;
@@ -314,6 +320,24 @@ struct Skybox {
 };
 void SkyboxDraw(void* _skybox);
 GameObject SkyboxPack(Skybox* skybox);
+
+struct CameraManager {
+    Camera playerCamera;
+    Camera debugCamera;
+    float debugCameraSpeed;
+    i32 cameraMode;
+};
+void CameraManagerInit(CameraManager* camMan, Camera playerCamera);
+void CameraManagerUpdate(void* _camMan);
+void CameraManagerDrawUi(void *_camMan);
+GameObject CameraManagerPack(CameraManager* camMan);
+
+void CameraUpdateDebug(Camera *camera, float speed);
+void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle);
+v3 GetCameraForwardNorm(Camera *camera);
+v3 GetCameraUpNorm(Camera *camera);
+v3 GetCameraRightNorm(Camera *camera);
+Camera CameraGetDefault();
 
 inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
 inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
@@ -511,6 +535,9 @@ namespace global {
         StringCreate("What can I do for you?"),
         StringCreate("Want a cigarette?")
     };
+
+    Camera* currentCamera = nullptr;
+    TextDrawingStyle textDrawingStyle;
 }
 
 void LoadGameShaders() {
@@ -611,6 +638,13 @@ void UnloadGameImages() {
 }
 
 void LoadGameResources() {
+    TextDrawingStyle textDrawingStyle = {};
+    textDrawingStyle.charSpacing = 1;
+    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.size = 24.f;
+    textDrawingStyle.color = WHITE;
+    global::textDrawingStyle = textDrawingStyle;
+
     LoadGameShaders();
     LoadGameModels();
     LoadGameTextures();
@@ -630,6 +664,10 @@ const i32 screenHeight = 800;
 
 i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     i32 goCount = 0;
+
+    CameraManager* camMan = (CameraManager*)MemoryManagerReserve(mm, sizeof(CameraManager));
+    CameraManagerInit(camMan, CameraGetDefault());
+    goOut[goCount] = CameraManagerPack(camMan); goCount++;
 
     v3 terrainSize = {1000.f, 100.f, 1000.f};
     v3 terrainPosition = terrainSize / -2.f;
@@ -656,7 +694,7 @@ i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     tw->autoHideOnEndDelay = 3.f;
     tw->x = screenWidth / 2;
     tw->y = screenHeight / 2 + screenHeight / 4;
-    tw->textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
+    tw->textStyle = &global::textDrawingStyle;
     goOut[goCount] = TypewriterPack(tw); goCount++;
 
     DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryManagerReserve(mm, sizeof(DialogueOptions));
@@ -665,7 +703,7 @@ i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
     dialogueOptions->number = 3;
     dialogueOptions->x = screenWidth / 2;
     dialogueOptions->y = screenHeight / 2 + screenHeight / 4;
-    dialogueOptions->textStyle = (TextDrawingStyle*)global::groups["mainTextDrawingStyle"];
+    dialogueOptions->textStyle = &global::textDrawingStyle;
     dialogueOptions->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
     dialogueOptions->npatchTexture = global::textures[global::TEXTURE_NPATCH];
     dialogueOptions->optionBoxHeightAdd = 32.f;
@@ -689,131 +727,75 @@ i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
+    ParticleSystem* psys = (ParticleSystem*)MemoryManagerReserve(mm, sizeof(ParticleSystem));
+    ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
+    psys->velocity = {1.f, 0.f, 0.f};
+    goOut[goCount] = ParticleSystemPack(psys); goCount++;
+
+    Cab* cab = (Cab*)MemoryManagerReserve(mm, sizeof(Cab));
+    CabInit(cab);
+    goOut[goCount] = CabPack(cab); goCount++;
+
     return goCount;
 };
 
-
 i32 main() {
-    u32 freecam = 0; 
-    
     SetTraceLogLevel(4);
     InitWindow(screenWidth, screenHeight, "Midnight Driver");
     SetTargetFPS(60);
     DisableCursor();
 
     MemoryManager memoryManager = MemoryManagerCreate(1 << 16);
-
     LoadGameResources();
     InputInit(&global::input);
-
-    TextDrawingStyle textDrawingStyle = {};
-    textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = GetFontDefault();
-    textDrawingStyle.size = 24.f;
-    textDrawingStyle.color = WHITE;
-    global::groups["mainTextDrawingStyle"] = (void*)&textDrawingStyle;
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
 
-    Camera camera = {};
-    camera.fovy = 60.f;
-    camera.position = {0.f, 0.f, 0.f};
-    camera.target = {1.f, 0.f, 0.f};
-    camera.projection = CAMERA_PERSPECTIVE;
-    camera.up = {0.f, 1.f, 0.f};
-
-    Cab cab = {};
-    CabInit(&cab);
-    
-    Camera debugCamera = {};
-    camera.fovy = 60.f;
-    camera.up = {0.f, 1.f, 0.f};
-    float debugCameraSpeed = 0.1f;
-
-    v3 terrainSize = {1000.f, 100.f, 1000.f};
-    v3 terrainPosition = terrainSize / -2.f;
-    terrainPosition.y = 0.f;
-
-    ParticleSystem psys = ParticleSystemCreate(global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
-    psys.velocity = {1.f, 0.f, 0.f};
-
-    ForestGenerationInfo forestInfo = {};
-    forestInfo.worldPosition = {0.f, 0.f};
-    forestInfo.worldSize = {16.f, 16.f};
-    InstanceMeshRenderData imrd = ForestCreateBlocks(
-        global::images[global::IMAGE_TERRAINMAP_TEST],
-        forestInfo,
-        global::models[global::MODEL_TREE].meshes[0],
-        global::materials[global::MATERIAL_UNLIT]);
-
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
-
         for (i32 i = 0; i < gameObjectCount; i++) {
             if (gameObject[i].Update != nullptr) {
                 gameObject[i].Update(gameObject[i].data);
             }
         }
-
-        if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
-            freecam = freecam ? 0 : 1;
-            if (freecam) {
-                debugCamera.position = camera.position;
-                debugCamera.target = camera.target;
-                debugCamera.projection = camera.projection;
-                debugCamera.fovy = camera.fovy;
-                debugCamera.up = {0.f, 1.f, 0.f};
-            }
-        }
-
-        v2 mouseScroll = GetMouseWheelMoveV();
-        debugCameraSpeed = fclampf(debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
-        Camera *usingCamera;
-        if (freecam) {
-            CameraUpdateDebug(&debugCamera, debugCameraSpeed);
-            usingCamera = &debugCamera;
+        
+        if (global::currentCamera != nullptr) {
+            UpdateGameMaterials(global::currentCamera->position);
         } else {
-            CabUpdate(&cab);
-            CameraUpdate(&camera, CabGetFrontSeatPosition(&cab), {cab.yawRotationStep, 0.f}, cab.direction);
-            usingCamera = &camera;
+            UpdateGameMaterials(v3{0.f, 0.f, 0.f});
         }
-
-        UpdateGameMaterials(usingCamera->position);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        BeginMode3D(*usingCamera);
-            for (i32 i = 0; i < gameObjectCount; i++) {
-                if (gameObject[i].Draw3d != nullptr) {
-                    gameObject[i].Draw3d(gameObject[i].data);
+        if (global::currentCamera != nullptr) {
+            BeginMode3D(*global::currentCamera);
+                for (i32 i = 0; i < gameObjectCount; i++) {
+                    if (gameObject[i].Draw3d != nullptr) {
+                        gameObject[i].Draw3d(gameObject[i].data);
+                    }
                 }
-            }
-            DrawMeshInstancedOptimized(imrd.mesh, imrd.material, imrd.transforms, imrd.instanceCount);
-            CabDraw(&cab);
-            ParticleSystemStep(&psys);
-            ParticleSystemDraw(&psys);
-            DrawGrid(20, 1.f);
-        EndMode3D();
+                DrawGrid(20, 1.f);
+            EndMode3D();
+        }
         for (i32 i = 0; i < gameObjectCount; i++) {
             if (gameObject[i].DrawUi != nullptr) {
                 gameObject[i].DrawUi(gameObject[i].data);
             }
         }
         DrawFPS(4, 4);
-        if (freecam) {
-            DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
-        }
-        DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
         EndDrawing();
     }
 
-    
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObject[i].Free != nullptr) {
+            gameObject[i].Free(gameObject[i].data);
+        }
+    }
 
     MemoryManagerDestroy(&memoryManager);
     UnloadGameResources();
-    ParticleSystemDestroy(&psys);
-
+    
     return(0);
 }
 
@@ -1137,38 +1119,41 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
     imrd.transforms = transformsV;
     return imrd;
 }
+void ForestDraw(void* _imrd);
+GameObject ForestPack(InstanceMeshRenderData* forest);
 
-ParticleSystem ParticleSystemCreate(Texture texture, Material material) {
-    ParticleSystem psys = {};
-    psys._material = material;
-    psys._material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
-    psys._quad = GenMeshPlane(1.f, 1.f, 1.f, 1);
-    psys._transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
-    psys.count = 64;
-    for (i32 i = 0; i < psys.count; i++) {
-        psys._transforms[i] = MatrixTranslate(
+void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material) {
+    psys->_material = material;
+    psys->_material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
+    psys->_quad = GenMeshPlane(1.f, 1.f, 1.f, 1);
+    psys->_transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
+    psys->count = 64;
+    for (i32 i = 0; i < psys->count; i++) {
+        psys->_transforms[i] = MatrixTranslate(
             GetRandomValueF(-10.f, 10.f),
             GetRandomValueF(-10.f, 10.f),
             GetRandomValueF(-10.f, 10.f));
     }
-    return psys;
 }
-
-void ParticleSystemDestroy(ParticleSystem *psys) {
+void ParticleSystemFree(void* _psys) {
+    ParticleSystem* psys = (ParticleSystem*)_psys;
     UnloadMesh(psys->_quad);
     RL_FREE(psys->_transforms);
 }
-
-void ParticleSystemStep(ParticleSystem *psys) {
+void ParticleSystemUpdate(void *_psys) {
+    ParticleSystem* psys = (ParticleSystem*)_psys;
     v3 stepVelocity = psys->velocity * FRAME_TIME;
     mat4 transpose = MatrixTranslate(stepVelocity.x, stepVelocity.y, stepVelocity.z);
     for (i32 i = 0; i < psys->count; i++) {
         psys->_transforms[i] *= transpose;
     }
 }
-
-void ParticleSystemDraw(ParticleSystem *psys) {
+void ParticleSystemDraw(void *_psys) {
+    ParticleSystem* psys = (ParticleSystem*)_psys;
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
+}
+GameObject ParticleSystemPack(ParticleSystem *psys) {
+    return GameObjectCreate((void*)psys, ParticleSystemUpdate, ParticleSystemDraw, nullptr, ParticleSystemFree);
 }
 
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera) {
@@ -1254,8 +1239,10 @@ void CabInit(Cab *cab) {
     cab->accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
     cab->reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
     cab->_transform = MatrixIdentity();
+    global::groups["cab"] = (void*)cab;
 }
-void CabUpdate(Cab *cab) {
+void CabUpdate(void* _cab) {
+    Cab* cab = (Cab*)_cab;
     bool inputAccelerate = global::input.down[INPUT_ACCELERATE];
     bool inputBreak = global::input.down[INPUT_BREAK];
     if (inputAccelerate && inputBreak) {
@@ -1296,7 +1283,8 @@ void CabUpdate(Cab *cab) {
         cab->position.x,
         cab->position.z);
 }
-void CabDraw(Cab *cab) {
+void CabDraw(void* _cab) {
+    Cab* cab = (Cab*)_cab;
     mat4 transform = cab->_transform * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
     for (i32 i = 0; i < cab->model.meshCount; i++) {
         DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], transform);
@@ -1304,6 +1292,76 @@ void CabDraw(Cab *cab) {
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
+}
+GameObject CabPack(Cab *cab) {
+    return GameObjectCreate(cab, CabUpdate, CabDraw, nullptr, nullptr);
+}
+
+void SkyboxDraw(void* _skybox) {
+    Skybox* skybox = (Skybox*)_skybox;
+    rlDisableBackfaceCulling();
+    rlDisableDepthMask();
+        DrawModel(skybox->model, {0.f}, 1.0f, WHITE);
+    rlEnableBackfaceCulling();
+    rlEnableDepthMask();
+}
+GameObject SkyboxPack(Skybox* skybox) {
+    GameObject go = {};
+    go.data = (void*)skybox;
+    go.Draw3d = SkyboxDraw;
+    go.DrawUi = nullptr;
+    go.Update = nullptr;
+    return go;
+}
+
+void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
+    camMan->playerCamera = playerCamera;
+    camMan->debugCamera = {};
+    camMan->debugCamera.fovy = 60.f;
+    camMan->debugCamera.up = {0.f, 1.f, 0.f};
+    camMan->debugCameraSpeed = 0.1f;
+    global::currentCamera = &camMan->playerCamera;
+}
+void CameraManagerUpdate(void* _camMan) {
+    CameraManager* camMan = (CameraManager*)_camMan;
+    if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
+        camMan->cameraMode = camMan->cameraMode ? 0 : 1;
+        if (camMan->cameraMode) {
+            camMan->debugCamera.position = camMan->playerCamera.position;
+            camMan->debugCamera.target = camMan->playerCamera.target;
+            camMan->debugCamera.projection = camMan->playerCamera.projection;
+            camMan->debugCamera.fovy = camMan->playerCamera.fovy;
+            camMan->debugCamera.up = {0.f, 1.f, 0.f};
+        }
+    }
+
+    v2 mouseScroll = GetMouseWheelMoveV();
+    camMan->debugCameraSpeed = fclampf(camMan->debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
+    Camera *usingCamera;
+    if (camMan->cameraMode) {
+        CameraUpdateDebug(&camMan->debugCamera, camMan->debugCameraSpeed);
+        usingCamera = &camMan->debugCamera;
+    } else {
+        Cab* cab = (Cab*)global::groups["cab"];
+        CameraUpdate(&camMan->playerCamera, CabGetFrontSeatPosition(cab), {cab->yawRotationStep, 0.f}, cab->direction);
+        usingCamera = &camMan->playerCamera;
+    }
+}
+void CameraManagerDrawUi(void *_camMan) {
+    CameraManager* camMan = (CameraManager*)_camMan;
+    if (camMan->cameraMode == 1) {
+        DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
+    }
+    DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
+}
+void CameraManagerFree(void* _camMan) {
+    CameraManager* camMan = (CameraManager*)_camMan;
+    if (global::currentCamera == &camMan->debugCamera || global::currentCamera == &camMan->playerCamera) {
+        global::currentCamera = nullptr;
+    }
+}
+GameObject CameraManagerPack(CameraManager* camMan) {
+    return GameObjectCreate(camMan, CameraManagerUpdate, nullptr, CameraManagerDrawUi, CameraManagerFree);
 }
 
 void CameraUpdateDebug(Camera *camera, float speed) {
@@ -1326,7 +1384,6 @@ void CameraUpdateDebug(Camera *camera, float speed) {
     camera->position.y += input.y * speed;
     camera->target = camera->position + targetDirection;
 }
-
 void CameraUpdate(Camera *camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     v3 target = Vector3Normalize(camera->target - camera->position);
     v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
@@ -1351,22 +1408,14 @@ v3 GetCameraRightNorm(Camera *camera) {
     v3 up = GetCameraUpNorm(camera);
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
-
-void SkyboxDraw(void* _skybox) {
-    Skybox* skybox = (Skybox*)_skybox;
-    rlDisableBackfaceCulling();
-    rlDisableDepthMask();
-        DrawModel(skybox->model, {0.f}, 1.0f, WHITE);
-    rlEnableBackfaceCulling();
-    rlEnableDepthMask();
-}
-GameObject SkyboxPack(Skybox* skybox) {
-    GameObject go = {};
-    go.data = (void*)skybox;
-    go.Draw3d = SkyboxDraw;
-    go.DrawUi = nullptr;
-    go.Update = nullptr;
-    return go;
+Camera CameraGetDefault() {
+    Camera camera = {};
+    camera.fovy = 60.f;
+    camera.position = {0.f, 0.f, 0.f};
+    camera.target = {1.f, 0.f, 0.f};
+    camera.projection = CAMERA_PERSPECTIVE;
+    camera.up = {0.f, 1.f, 0.f};
+    return camera;
 }
 
 GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void*), void(*drawUi)(void*), void(*free)(void*)) {
