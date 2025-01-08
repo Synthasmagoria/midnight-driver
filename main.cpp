@@ -86,6 +86,8 @@ void ListChangeCapacity(List* list, u32 capacity);
 void* ListGet(List* list, u32 ind);
 void ListSet(List* list, u32 ind, void* val);
 void ListPushBack(List* list, void* val);
+void StringListInit(List* list, u32 size, MemoryPool* mp);
+void StringListAdd(List* list, MemoryPool* mp, const char* str);
 
 struct String {
     char* cstr;
@@ -143,7 +145,7 @@ struct DialogueSequence {
     List dialogue;
     List dialogueOptions;
 };
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
@@ -756,6 +758,7 @@ void MemoryPoolDestroy(MemoryPool* mm) {
 }
 void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
     if (mm->location + size >= mm->size) {
+        TraceLog(LOG_ERROR, "Memory pool: Out of memory!");
         return nullptr;
     }
     void* reserve = (byte*)mm->buffer + mm->location;
@@ -952,27 +955,20 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
     return GameObjectCreate(dopt, DialogueOptionsUpdate, nullptr, DialogueOptionsDraw, nullptr);
 }
 
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
-    ListInit(&dseq->dialogue, 0);
-    ListChangeCapacity(&dseq->dialogue, 100);
-    ListInit(&dseq->dialogueOptions, 0);
-    ListChangeCapacity(&dseq->dialogue, 100);
-    List* dia = &dseq->dialogue;
-    List* diao = &dseq->dialogueOptions;
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp) {
+    List* list = (List*)MemoryPoolReserve(mp, sizeof(List));
+    const i32 stringCount = 50;
+    StringListInit(list, stringCount, mp);
+
     switch (ind) {
         case 0:
-            ListPushBack(dia, "This is text.");
-            ListPushBack(dia, "I sure love text!");
-            ListPushBack(dia, "Do you like text too?");
-            ListPushBack(diao, "For sure I do!");
-            ListPushBack(diao, "Nah, niqqa...");
-            ListPushBack(diao, "This is ridiculous.");
+            StringListAdd(list, mp, "This is definitely text");
+            StringListAdd(list, mp, "Surely this is pretty close in memory");
+            StringListAdd(list, mp, "Hopefully I won't run out lol");
             break;
         default:
             break;
     }
-    TypewriterInit(&dseq->typewriter, (String*)ListGet(diao, 0), 3);
-    DialogueOptionsInit(&dseq->options, (String*)ListGet(diao, 0), 3);
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1487,6 +1483,24 @@ void ListPushBack(List* list, void* val) {
     list->data[list->size] = val;
     list->size++;
 }
+void StringListInit(List* list, u32 stringCount, MemoryPool* mp) {
+    list->data = (void**)MemoryPoolReserve(mp, sizeof(String) * stringCount);
+    list->capacity = stringCount;
+    list->size = 0;
+}
+void StringListAdd(List* list, MemoryPool* mp, const char* cstr) {
+    if (list->size + 1 >= list->capacity) {
+        TraceLog(LOG_ERROR, "StringList: Out of strings");
+        return;
+    }
+    String* data = (String*)list->data;
+    i32 cstrLen = strlen(cstr);
+    String* str = data + list->size;
+    str->cstr = (char*)MemoryPoolReserve(mp, sizeof(char) * cstrLen);
+    str->length = cstrLen;
+    strcpy(str->cstr, cstr);
+    list->size++;
+}
 
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
     const u32 resdiv = info.resdiv;
@@ -1861,9 +1875,9 @@ i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mp) {
     // DialogueOptionsInit(dopts, &global::dialogueOptions[0], 3);
     // go[goCount] = DialogueOptionsPack(dopts); goCount++;
 
-    // DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(mp, sizeof(DialogueSequence));
-    // DialogueSequenceInit(dseq, 0);
-    // go[goCount] = DialogueSequencePack(dseq); goCount++;
+    DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(mp, sizeof(DialogueSequence));
+    DialogueSequenceInit(dseq, 0, mp);
+    go[goCount] = DialogueSequencePack(dseq); goCount++;
 
     return goCount;
 }
