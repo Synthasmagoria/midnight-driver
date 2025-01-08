@@ -31,11 +31,13 @@ typedef Vector2 v2;
 #define TAU PI * 2.f
 #define GAME_OBJECT_MAX 1000
 
-struct MemoryManager;
+struct MemoryPool;
 struct GameObject;
+struct List;
 struct String;
 struct Typewriter;
 struct DialogueOptions;
+struct DialogueSequence;
 struct TextDrawingStyle;
 struct Input;
 struct ForestGenerationInfo;
@@ -45,7 +47,6 @@ struct Particle;
 struct ParticleSystem;
 struct BillboardParticle;
 struct BillboardParticleSystem;
-struct List;
 struct HeightmapGenerationInfo;
 struct Heightmap;
 struct Cab;
@@ -54,14 +55,14 @@ struct CameraManager;
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
-struct MemoryManager {
+struct MemoryPool {
     void* buffer;
     i32 location;
     i32 size;
 };
-MemoryManager MemoryManagerCreate(i32 size);
-void MemoryManagerDestroy(MemoryManager* mm);
-void* MemoryManagerReserve(MemoryManager* mm, i32 size);
+MemoryPool MemoryPoolCreate(i32 size);
+void MemoryPoolDestroy(MemoryPool* mm);
+void* MemoryPoolReserve(MemoryPool* mm, i32 size);
 
 struct GameObject {
     void (*Update) (void*);
@@ -71,6 +72,20 @@ struct GameObject {
     void *data;
 };
 GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
+
+struct List {
+    void** data;
+    u32 size;
+    u32 capacity;
+};
+List ListCreate(u32 size);
+void ListInit(List *list, u32 size);
+void ListDestroy(List *list);
+void ListResize(List *list, u32 size);
+void ListChangeCapacity(List *list, u32 capacity);
+void* ListGet(List *list, u32 ind);
+void ListSet(List *list, u32 ind, void* val);
+void ListPushBack(List *list, void* val);
 
 struct String {
     char* cstr;
@@ -97,6 +112,7 @@ struct Typewriter {
     float progress;
     TextDrawingStyle* textStyle;
 };
+void TypewriterInit(Typewriter* tw, String* string, i32 stringCount);
 void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
 GameObject TypewriterPack(Typewriter* tw);
@@ -115,10 +131,24 @@ struct DialogueOptions {
     NPatchInfo npatchInfo;
     Texture2D npatchTexture;
 };
+void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num);
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
 void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
 GameObject DialogueOptionsPack(DialogueOptions* dopt);
+
+struct DialogueSequence {
+    Typewriter typewriter;
+    DialogueOptions options;
+    List dialogue;
+    List dialogueOptions;
+};
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
+void DialogueSequenceUpdate(void* _dseq);
+void DialogueSequenceDraw(void* _dseq);
+void DialogueSequencePack(void* _dseq);
+void DialogueSequenceFree(void* _dseq);
+GameObject DialogueSequencePack(DialogueSequence* _dseq);
 
 struct TextDrawingStyle {
     Color color;
@@ -242,20 +272,6 @@ struct BillboardParticleSystem {
     u32 _index;
 };
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera);
-
-struct List {
-    void** data;
-    u32 size;
-    u32 capacity;
-};
-List ListCreate(u32 size);
-void ListInit(List *list, u32 size);
-void ListDestroy(List *list);
-void ListResize(List *list, u32 size);
-void ListChangeCapacity(List *list, u32 capacity);
-void* ListGet(List *list, u32 ind);
-void ListSet(List *list, u32 ind, void* val);
-void ListPushBack(List *list, void* val);
 
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
@@ -662,95 +678,22 @@ void UnloadGameResources() {
 const i32 screenWidth = 1440;
 const i32 screenHeight = 800;
 
-i32 SceneSetup01(GameObject* goOut, MemoryManager* mm) {
-    i32 goCount = 0;
-
-    CameraManager* camMan = (CameraManager*)MemoryManagerReserve(mm, sizeof(CameraManager));
-    CameraManagerInit(camMan, CameraGetDefault());
-    goOut[goCount] = CameraManagerPack(camMan); goCount++;
-
-    v3 terrainSize = {1000.f, 100.f, 1000.f};
-    v3 terrainPosition = terrainSize / -2.f;
-    terrainPosition.y = 0.f;
-
-    HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
-    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
-    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
-    hgi.position = terrainPosition;
-    hgi.size = terrainSize;
-    hgi.resdiv = 2;
-    Heightmap* hm = (Heightmap*)MemoryManagerReserve(mm, sizeof(Heightmap));
-    HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
-    global::groups["terrainHeightmap"] = (void*)&hm;
-    goOut[goCount] = HeightmapPack(hm); goCount++;
-
-    Typewriter* tw = (Typewriter*)MemoryManagerReserve(mm, sizeof(Typewriter));
-    tw->text = &global::dialogue[1];
-    tw->visible = false;
-    tw->textCount = 2;
-    tw->speed = 16.f;
-    tw->autoContinueDelay = 1.f;
-    tw->autoHideOnEndDelay = 3.f;
-    tw->x = screenWidth / 2;
-    tw->y = screenHeight / 2 + screenHeight / 4;
-    tw->textStyle = &global::textDrawingStyle;
-    goOut[goCount] = TypewriterPack(tw); goCount++;
-
-    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryManagerReserve(mm, sizeof(DialogueOptions));
-    dialogueOptions->index = 0;
-    dialogueOptions->options = &global::dialogueOptions[0];
-    dialogueOptions->number = 3;
-    dialogueOptions->x = screenWidth / 2;
-    dialogueOptions->y = screenHeight / 2 + screenHeight / 4;
-    dialogueOptions->textStyle = &global::textDrawingStyle;
-    dialogueOptions->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
-    dialogueOptions->npatchTexture = global::textures[global::TEXTURE_NPATCH];
-    dialogueOptions->optionBoxHeightAdd = 32.f;
-    dialogueOptions->optionSeparationAdd = 48.f;
-    goOut[goCount] = DialogueOptionsPack(dialogueOptions); goCount++;
-
-    Skybox* skybox = (Skybox*)MemoryManagerReserve(mm, sizeof(Skybox));
-    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    skybox->shader = global::shaders[global::SHADER_SKYBOX];
-    {
-        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-        i32 gammaValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-        i32 vflippedValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-    }
-    skybox->model.materials[0].shader = skybox->shader;
-    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        global::images[global::IMAGE_SKYBOX],
-        CUBEMAP_LAYOUT_AUTO_DETECT);
-    goOut[goCount] = SkyboxPack(skybox); goCount++;
-
-    ParticleSystem* psys = (ParticleSystem*)MemoryManagerReserve(mm, sizeof(ParticleSystem));
-    ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
-    psys->velocity = {1.f, 0.f, 0.f};
-    goOut[goCount] = ParticleSystemPack(psys); goCount++;
-
-    Cab* cab = (Cab*)MemoryManagerReserve(mm, sizeof(Cab));
-    CabInit(cab);
-    goOut[goCount] = CabPack(cab); goCount++;
-
-    return goCount;
-};
+i32 SceneSetup01(GameObject* goOut, MemoryPool* mm);
+i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mm);
 
 i32 main() {
     SetTraceLogLevel(4);
     InitWindow(screenWidth, screenHeight, "Midnight Driver");
-    SetTargetFPS(60);
+    SetTargetFPS(FRAMERATE);
     DisableCursor();
 
-    MemoryManager memoryManager = MemoryManagerCreate(1 << 16);
+    MemoryPool memoryPool = MemoryPoolCreate(1 << 16);
     LoadGameResources();
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
+    //i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
+    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject, &memoryPool);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -767,7 +710,7 @@ i32 main() {
         }
 
         BeginDrawing();
-        ClearBackground(RAYWHITE);
+        ClearBackground(BLACK);
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
                 for (i32 i = 0; i < gameObjectCount; i++) {
@@ -793,25 +736,25 @@ i32 main() {
         }
     }
 
-    MemoryManagerDestroy(&memoryManager);
+    MemoryPoolDestroy(&memoryPool);
     UnloadGameResources();
-    
+
     return(0);
 }
 
-MemoryManager MemoryManagerCreate(i32 size) {
-    MemoryManager mm;
+MemoryPool MemoryPoolCreate(i32 size) {
+    MemoryPool mm;
     mm.buffer = calloc(size, sizeof(byte));
     mm.location = 0;
     mm.size = size;
     return mm;
 }
-void MemoryManagerDestroy(MemoryManager* mm) {
+void MemoryPoolDestroy(MemoryPool* mm) {
     if (mm->buffer != nullptr) {
         free(mm->buffer);
     }
 }
-void* MemoryManagerReserve(MemoryManager* mm, i32 size) {
+void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
     if (mm->location + size >= mm->size) {
         return nullptr;
     }
@@ -862,6 +805,17 @@ void StringDestroy(String str) {
     }
 }
 
+void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
+    tw->text = string;
+    tw->visible = true;
+    tw->textCount = stringCount;
+    tw->speed = 16.f;
+    tw->autoContinueDelay = 1.f;
+    tw->autoHideOnEndDelay = 3.f;
+    tw->x = screenWidth / 2;
+    tw->y = screenHeight / 2 + screenHeight / 4;
+    tw->textStyle = &global::textDrawingStyle;
+}
 void TypewriterUpdate(void *_tw) {
     Typewriter* tw = (Typewriter*)_tw;
     if (tw->text == nullptr) {
@@ -920,14 +874,21 @@ void TypewriterDraw(void* _tw) {
 }
 
 GameObject TypewriterPack(Typewriter* tw) {
-    GameObject go;
-    go.data = (void*)tw;
-    go.Update = TypewriterUpdate;
-    go.Draw3d = nullptr;
-    go.DrawUi = TypewriterDraw;
-    return go;
+    return GameObjectCreate(tw, TypewriterUpdate, nullptr, TypewriterDraw, nullptr);
 }
 
+void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
+    dopt->index = 0;
+    dopt->options = str;
+    dopt->number = num;
+    dopt->x = screenWidth / 2;
+    dopt->y = screenHeight / 2 + screenHeight / 4;
+    dopt->textStyle = &global::textDrawingStyle;
+    dopt->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
+    dopt->npatchTexture = global::textures[global::TEXTURE_NPATCH];
+    dopt->optionBoxHeightAdd = 32.f;
+    dopt->optionSeparationAdd = 48.f;
+}
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions) {
     i32 input = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
     dialogueOptions->index = iwrapi(dialogueOptions->index + input, 0, dialogueOptions->number);
@@ -988,12 +949,48 @@ void DialogueOptionsDraw(void *_dopt) {
     free(textSize);
 }
 GameObject DialogueOptionsPack(DialogueOptions* dopt) {
-    GameObject go = {0};
-    go.data = (void*)dopt;
-    go.Draw3d = nullptr;
-    go.DrawUi = DialogueOptionsDraw;
-    go.Update = DialogueOptionsUpdate;
-    return go;
+    return GameObjectCreate(dopt, DialogueOptionsUpdate, nullptr, DialogueOptionsDraw, nullptr);
+}
+
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
+    ListInit(&dseq->dialogue, 0);
+    ListChangeCapacity(&dseq->dialogue, 100);
+    ListInit(&dseq->dialogueOptions, 0);
+    ListChangeCapacity(&dseq->dialogue, 100);
+    List* dia = &dseq->dialogue;
+    List* diao = &dseq->dialogueOptions;
+    switch (ind) {
+        case 0:
+            ListPushBack(dia, "This is text.");
+            ListPushBack(dia, "I sure love text!");
+            ListPushBack(dia, "Do you like text too?");
+            ListPushBack(diao, "For sure I do!");
+            ListPushBack(diao, "Nah, niqqa...");
+            ListPushBack(diao, "This is ridiculous.");
+            break;
+        default:
+            break;
+    }
+    TypewriterInit(&dseq->typewriter, (String*)ListGet(diao, 0), 3);
+    DialogueOptionsInit(&dseq->options, (String*)ListGet(diao, 0), 3);
+}
+void DialogueSequenceUpdate(void* _dseq) {
+    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+    DialogueOptionsUpdate(&dseq->dialogueOptions);
+    TypewriterUpdate(&dseq->typewriter);
+}
+void DialogueSequenceDraw(void* _dseq) {
+    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+    DialogueOptionsDraw(&dseq->dialogueOptions);
+    TypewriterDraw(&dseq->typewriter);
+}
+void DialogueSequenceFree(void* _dseq) {
+    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+    ListDestroy(&dseq->dialogue);
+    ListDestroy(&dseq->dialogueOptions);
+}
+GameObject DialogueSequencePack(DialogueSequence* _dseq) {
+    return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
 }
 
 void InputInit(Input *input) {
@@ -1306,12 +1303,7 @@ void SkyboxDraw(void* _skybox) {
     rlEnableDepthMask();
 }
 GameObject SkyboxPack(Skybox* skybox) {
-    GameObject go = {};
-    go.data = (void*)skybox;
-    go.Draw3d = SkyboxDraw;
-    go.DrawUi = nullptr;
-    go.Update = nullptr;
-    return go;
+    return GameObjectCreate(skybox, nullptr, SkyboxDraw, nullptr, nullptr);
 }
 
 void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
@@ -1428,6 +1420,74 @@ GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void
     return go;
 }
 
+List ListCreate(u32 size) {
+    List list = {};
+    ListInit(&list, size);
+    return list;
+}
+void ListInit(List* list, u32 size) {
+    if (size == 0) {
+        list->data = nullptr;
+    } else {
+        list->data = (void**)malloc(size * sizeof(void*));
+    }
+    list->size = 0;
+    while (list->size < size) {
+        list->data[list->size] = 0;
+        list->size++;
+    }
+    list->capacity = list->size;
+}
+void ListDestroy(List *list) {
+    if (list->data != NULL) {
+        free(list->data);
+        list->data = NULL;
+        list->size = 0;
+    }
+}
+void ListResize(List *list, u32 size) {
+    if (list->data != NULL) {
+        list->data = (void**)realloc(list->data, sizeof(void*) * size);
+    } else {
+        list->data = (void**)malloc(sizeof(void*) * size);
+    }
+    while (list->size < size) {
+        list->data[list->size] = 0;
+        list->size++;
+    }
+    list->capacity = size;
+    list->size = size;
+}
+void ListChangeCapacity(List *list, u32 capacity) {
+    if (list->data != NULL) {
+        list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
+    } else {
+        list->data = (void**)malloc(sizeof(void*) * capacity);
+    }
+    list->capacity = capacity;
+}
+void* ListGet(List *list, u32 ind) {
+    if (ind >= list->size && ind < list->capacity) {
+        TraceLog(LOG_ERROR, "List: Tried getting value outside of size in list, returned '-1'");
+        return NULL;
+    }
+    return list->data[ind];
+}
+void ListSet(List *list, u32 ind, void* val) {
+    list->data[ind] = val;
+}
+void ListPushBack(List *list, void* val) {
+    if (list->capacity == list->size) {
+        if (list->capacity == 0) {
+            ListChangeCapacity(list, 8 * sizeof(void*));
+        } else {
+            ListChangeCapacity(list, list->capacity * 2 * sizeof(void*));
+        }
+    }
+    list->data[list->size] = val;
+    list->size++;
+}
+
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
     const u32 resdiv = info.resdiv;
     const Image *image = info.heightmapImage;
@@ -1492,74 +1552,6 @@ void HeightmapDraw(void* _hm) {
 }
 GameObject HeightmapPack(Heightmap* hm) {
     return GameObjectCreate(hm, nullptr, HeightmapDraw, nullptr, HeightmapFree);
-}
-
-List ListCreate(u32 size) {
-    List list = {};
-    ListInit(&list, size);
-    return list;
-}
-void ListInit(List* list, u32 size) {
-    if (size == 0) {
-        list->data = NULL;
-    } else {
-        list->data = (void**)malloc(size * sizeof(void*));
-    }
-    list->size = 0;
-    while (list->size < size) {
-        list->data[list->size] = 0;
-        list->size++;
-    }
-    list->capacity = list->size;
-}
-void ListDestroy(List *list) {
-    if (list->data != NULL) {
-        free(list->data);
-        list->data = NULL;
-        list->size = 0;
-    }
-}
-void ListResize(List *list, u32 size) {
-    if (list->data != NULL) {
-        list->data = (void**)realloc(list->data, sizeof(void*) * size);
-    } else {
-        list->data = (void**)malloc(sizeof(void*) * size);
-    }
-    while (list->size < size) {
-        list->data[list->size] = 0;
-        list->size++;
-    }
-    list->capacity = size;
-    list->size = size;
-}
-void ListChangeCapacity(List *list, u32 capacity) {
-    if (list->data != NULL) {
-        list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
-    } else {
-        list->data = (void**)malloc(sizeof(void*) * capacity);
-    }
-    list->capacity = capacity;
-}
-void* ListGet(List *list, u32 ind) {
-    if (ind >= list->size && ind < list->capacity) {
-        TraceLog(LOG_ERROR, "List: Tried getting value outside of size in list, returned '-1'");
-        return NULL;
-    }
-    return list->data[ind];
-}
-void ListSet(List *list, u32 ind, void* val) {
-    list->data[ind] = val;
-}
-void ListPushBack(List *list, void* val) {
-    if (list->capacity == list->size) {
-        if (list->capacity == 0) {
-            ListChangeCapacity(list, 8 * sizeof(void*));
-        } else {
-            ListChangeCapacity(list, list->capacity * 2 * sizeof(void*));
-        }
-    }
-    list->data[list->size] = val;
-    list->size++;
 }
 
 #define MAX_MATERIAL_MAPS 12
@@ -1796,4 +1788,82 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
     // Remove instance transforms buffer
     rlUnloadVertexBuffer(instancesVboId);
 #endif
+}
+
+i32 SceneSetup01(GameObject* goOut, MemoryPool* mp) {
+    i32 goCount = 0;
+
+    CameraManager* camMan = (CameraManager*)MemoryPoolReserve(mp, sizeof(CameraManager));
+    CameraManagerInit(camMan, CameraGetDefault());
+    goOut[goCount] = CameraManagerPack(camMan); goCount++;
+
+    v3 terrainSize = {1000.f, 100.f, 1000.f};
+    v3 terrainPosition = terrainSize / -2.f;
+    terrainPosition.y = 0.f;
+
+    HeightmapGenerationInfo hgi = {};
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
+    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
+    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
+    hgi.position = terrainPosition;
+    hgi.size = terrainSize;
+    hgi.resdiv = 2;
+    Heightmap* hm = (Heightmap*)MemoryPoolReserve(mp, sizeof(Heightmap));
+    HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
+    global::groups["terrainHeightmap"] = (void*)&hm;
+    goOut[goCount] = HeightmapPack(hm); goCount++;
+
+    Typewriter* tw = (Typewriter*)MemoryPoolReserve(mp, sizeof(Typewriter));
+    TypewriterInit(tw, &global::dialogue[1], 2);
+    goOut[goCount] = TypewriterPack(tw); goCount++;
+
+    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryPoolReserve(mp, sizeof(DialogueOptions));
+    DialogueOptionsInit(dialogueOptions, &global::dialogueOptions[0], 3);
+    goOut[goCount] = DialogueOptionsPack(dialogueOptions); goCount++;
+
+    Skybox* skybox = (Skybox*)MemoryPoolReserve(mp, sizeof(Skybox));
+    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    skybox->shader = global::shaders[global::SHADER_SKYBOX];
+    {
+        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        i32 gammaValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        i32 vflippedValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    }
+    skybox->model.materials[0].shader = skybox->shader;
+    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        global::images[global::IMAGE_SKYBOX],
+        CUBEMAP_LAYOUT_AUTO_DETECT);
+    goOut[goCount] = SkyboxPack(skybox); goCount++;
+
+    ParticleSystem* psys = (ParticleSystem*)MemoryPoolReserve(mp, sizeof(ParticleSystem));
+    ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
+    psys->velocity = {1.f, 0.f, 0.f};
+    goOut[goCount] = ParticleSystemPack(psys); goCount++;
+
+    Cab* cab = (Cab*)MemoryPoolReserve(mp, sizeof(Cab));
+    CabInit(cab);
+    goOut[goCount] = CabPack(cab); goCount++;
+
+    return goCount;
+};
+
+i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mp) {
+    i32 goCount = 0;
+
+    // Typewriter* tw = (Typewriter*)MemoryManagerReserve(mm, sizeof(Typewriter));
+    // TypewriterInit(tw, &global::dialogue[1], 2);
+    // go[goCount] = TypewriterPack(tw); goCount++;
+
+    // DialogueOptions* dopts = (DialogueOptions*)MemoryManagerReserve(mm, sizeof(DialogueOptions));
+    // DialogueOptionsInit(dopts, &global::dialogueOptions[0], 3);
+    // go[goCount] = DialogueOptionsPack(dopts); goCount++;
+
+    // DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(mp, sizeof(DialogueSequence));
+    // DialogueSequenceInit(dseq, 0);
+    // go[goCount] = DialogueSequencePack(dseq); goCount++;
+
+    return goCount;
 }
