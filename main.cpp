@@ -57,6 +57,7 @@ typedef void(*TypewriterEventCallbackSignature)(void*, i32, i32);
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
+// TODO: Create a global memory pool that systems can take advantage of globally
 struct MemoryPool {
     void* buffer;
     i32 location;
@@ -157,11 +158,11 @@ void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
 GameObject DialogueOptionsPack(DialogueOptions* dopt);
 
+#define SEQUENCE_LENGTH_MAX 16
 struct DialogueSequence {
     Typewriter typewriter;
     DialogueOptions options;
-    StringList dialogue;
-    StringList dialogueOptions;
+    List sections;
 };
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp);
 void DialogueSequenceUpdate(void* _dseq);
@@ -170,6 +171,11 @@ void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
 void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 lineCount);
+struct DialogueSequenceSection {
+    StringList* text;
+    StringList* options;
+};
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp);
 
 struct TextDrawingStyle {
     Color color;
@@ -1009,28 +1015,30 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
 }
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp) {
-    StringList* dialogue = &dseq->dialogue;
-    const i32 stringCount = 50;
-    StringListInit(dialogue, stringCount, mp);
-    StringList* dialogueOptions = &dseq->dialogueOptions;
-    StringListInit(dialogueOptions, stringCount, mp);
-
+    ListInit(&dseq->sections, 0);
+    ListChangeCapacity(&dseq->sections, 50);
     switch (ind) {
         case 0:
-            StringListAdd(dialogue, mp, "This is definitely text");
-            StringListAdd(dialogue, mp, "Surely this is pretty close in memory");
-            StringListAdd(dialogue, mp, "Hopefully I won't run out lol");
-            StringListAdd(dialogueOptions, mp, "Yes");
-            StringListAdd(dialogueOptions, mp, "No");
-            StringListAdd(dialogueOptions, mp, "Idk");
+        {
+            DialogueSequenceSection* dss = DialogueSequenceSectionCreate(3, 3, mp);
+            StringList* text = dss->text;
+            StringList* opt = dss->options;
+            StringListAdd(text, mp, "This is definitely text");
+            StringListAdd(text, mp, "Surely this is pretty close in memory");
+            StringListAdd(text, mp, "Hopefully I won't run out lol");
+            StringListAdd(opt, mp, "Yes");
+            StringListAdd(opt, mp, "No");
+            StringListAdd(opt, mp, "Idk");
+            ListPushBack(&dseq->sections, dss);
             break;
-        default:
-            break;
+        }
     }
-    TypewriterInit(&dseq->typewriter, dialogue->data, 3);
+
+    DialogueSequenceSection* dss = (DialogueSequenceSection*)ListGet(&dseq->sections, 0);
+    TypewriterInit(&dseq->typewriter, dss->text->data, dss->text->size);
     dseq->typewriter.autoAdvance = true;
     dseq->typewriter.autoHide = false;
-    DialogueOptionsInit(&dseq->options, dialogueOptions->data, 3);
+    DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
     dseq->options.visible = false;
 }
 void DialogueSequenceUpdate(void* _dseq) {
@@ -1045,6 +1053,14 @@ void DialogueSequenceDraw(void* _dseq) {
 }
 void DialogueSequenceFree(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
+}
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp) {
+    DialogueSequenceSection* dss = (DialogueSequenceSection*)MemoryPoolReserve(mp, sizeof(DialogueSequenceSection));
+    dss->text = (StringList*)MemoryPoolReserve(mp, sizeof(StringList));
+    StringListInit(dss->text, textCount, mp);
+    dss->options = (StringList*)MemoryPoolReserve(mp, sizeof(StringList));
+    StringListInit(dss->options, optionCount, mp);
+    return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
@@ -1564,7 +1580,7 @@ void StringListInit(StringList* list, u32 stringCount, MemoryPool* mp) {
     list->size = 0;
 }
 void StringListAdd(StringList* list, MemoryPool* mp, const char* cstr) {
-    if (list->size + 1 >= list->capacity) {
+    if (list->size >= list->capacity) {
         TraceLog(LOG_ERROR, "StringList: Out of strings");
         return;
     }
