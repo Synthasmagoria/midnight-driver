@@ -497,6 +497,8 @@ i32 PixelformatGetStride(i32 format) {
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
+#define LOAD_FONT(path)(LoadFont(TextFormat("resources/fonts/%s", path)))
+#define LOAD_FONT_TTF(path)(LoadFontEx(TextFormat("resources/fonts/%s", path), 16, 0, 250))
 #define MatrixRotateRoll(rad) MatrixRotateX(rad)
 #define MatrixRotateYaw(rad) MatrixRotateY(rad)
 #define MatrixRotatePitch(rad) MatrixRotateZ(rad)
@@ -569,6 +571,21 @@ namespace global {
     };
     Image images[IMAGE_COUNT];
 
+    enum GAME_FONT_TYPES {
+        FONT_TYPE_PNG,
+        FONT_TYPE_TTF
+    };
+    enum GAME_FONTS {
+        FONT_GAME,
+        FONT_DEBUG,
+        FONT_COUNT
+    };
+    const char* fontPaths[FONT_COUNT] = {
+        "silver.ttf",
+        "mecha.png"
+    };
+    Font fonts[FONT_COUNT];
+
     Input input;
 
     unordered_map<string, void*> groups = unordered_map<string, void*>();
@@ -589,6 +606,7 @@ namespace global {
 
     Camera* currentCamera = nullptr;
     TextDrawingStyle textDrawingStyle = {};
+    TextDrawingStyle debugDrawingStyle = {};
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
     MemoryPool* memory;
@@ -691,12 +709,28 @@ void UnloadGameImages() {
     }
 }
 
+void LoadGameFonts() {
+    for (i32 i = 0; i < global::FONT_COUNT; i++) {
+        if (strstr(global::fontPaths[i], ".png")) {
+            global::fonts[i] = LOAD_FONT(global::fontPaths[i]);
+        } else if (strstr(global::fontPaths[i], ".ttf")) {
+            global::fonts[i] = LOAD_FONT_TTF(global::fontPaths[i]);
+        }
+    }
+}
+void UnloadGameFonts() {
+    for (i32 i = 0; i < global::FONT_COUNT; i++) {
+        UnloadFont(global::fonts[i]);
+    }
+}
+
 void LoadGameResources() {
     LoadGameShaders();
     LoadGameModels();
     LoadGameTextures();
     LoadGameImages();
     LoadGameMaterials();
+    LoadGameFonts();
 }
 void UnloadGameResources() {
     UnloadGameShaders();
@@ -704,6 +738,7 @@ void UnloadGameResources() {
     UnloadGameTextures();
     UnloadGameImages();
     UnloadGameMaterials();
+    UnloadGameFonts();
 }
 
 const i32 screenWidth = 1440;
@@ -718,16 +753,20 @@ i32 main() {
     SetTargetFPS(FRAMERATE);
     DisableCursor();
 
+    bool showDebugOverlay = true;
+
     global::localMemoryPool = MemoryPoolCreate(1 << 16);
     global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
     global::memory = &global::localMemoryPool;
 
     TextDrawingStyle textDrawingStyle = {};
     textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.font = global::fonts[global::FONT_DEBUG];
     textDrawingStyle.size = 24.f;
     textDrawingStyle.color = WHITE;
     global::textDrawingStyle = textDrawingStyle;
+
+    global::debugDrawingStyle.charSpacing = 1;
 
     LoadGameResources();
     InputInit(&global::input);
@@ -767,7 +806,16 @@ i32 main() {
                 gameObject[i].DrawUi(gameObject[i].data);
             }
         }
-        DrawFPS(4, 4);
+        if (showDebugOverlay) {
+            DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
+            TextDrawingStyle style = global::textDrawingStyle;
+            v2 drawPos = {4.f, 4.f};
+            DrawTextEx(style.font, "Memory usage:", drawPos, style.size, style.charSpacing, WHITE);
+            drawPos.y += style.size;
+            DrawTextEx(style.font, TextFormat("Local: %i / %i", global::localMemoryPool.location, global::localMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+            drawPos.y += style.size;
+            DrawTextEx(style.font, TextFormat("Global: %i / %i", global::persistentMemoryPool.location, global::persistentMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+        }
         EndDrawing();
     }
 
