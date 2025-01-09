@@ -11,21 +11,6 @@
 using std::string;
 using std::unordered_map;
 
-typedef uint8_t byte;
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
-typedef Matrix mat4;
-typedef Rectangle rect2;
-typedef Vector4 v4;
-typedef Vector3 v3;
-typedef Vector2 v2;
-
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
@@ -35,6 +20,7 @@ struct MemoryPool;
 struct GameObject;
 struct List;
 struct String;
+struct StringList;
 struct Typewriter;
 struct DialogueOptions;
 struct DialogueSequence;
@@ -52,6 +38,22 @@ struct Heightmap;
 struct Cab;
 struct Skybox;
 struct CameraManager;
+
+typedef uint8_t byte;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+typedef Matrix mat4;
+typedef Rectangle rect2;
+typedef Vector4 v4;
+typedef Vector3 v3;
+typedef Vector2 v2;
+typedef void(*TypewriterEventCallbackSignature)(void*, i32, i32);
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
@@ -84,10 +86,18 @@ void ListDestroy(List* list);
 void ListResize(List* list, u32 size);
 void ListChangeCapacity(List* list, u32 capacity);
 void* ListGet(List* list, u32 ind);
+i32 ListFind(List* list, void* val);
 void ListSet(List* list, u32 ind, void* val);
 void ListPushBack(List* list, void* val);
-void StringListInit(List* list, u32 size, MemoryPool* mp);
-void StringListAdd(List* list, MemoryPool* mp, const char* str);
+
+struct StringList {
+    String* data;
+    u32 size;
+    u32 capacity;
+};
+void StringListInit(StringList* list, u32 size, MemoryPool* mp);
+void StringListAdd(StringList* list, MemoryPool* mp, const char* str);
+String* StringListGet(StringList* list, u32 ind);
 
 struct String {
     char* cstr;
@@ -103,21 +113,28 @@ struct Typewriter {
     String *text;
     i32 textCount;
     i32 textIndex;
+    bool autoAdvance;
+    bool autoHide;
     float autoContinueDelay;
-    float _autoContinueTime;
     float autoHideOnEndDelay;
-    float _autoHideOnEndTime;
-    i32 visible;
+    float _autoAdvanceCountdown;
+    bool visible;
     i32 x;
     i32 y;
     float speed;
     float progress;
     TextDrawingStyle* textStyle;
+    List textAdvanceCallbacks;
+    List textAdvanceCallbackRegistrars;
 };
 void TypewriterInit(Typewriter* tw, String* string, i32 stringCount);
 void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
 GameObject TypewriterPack(Typewriter* tw);
+// TODO: Encapsulate this functionality in a signal processing structure
+void TypewriterEvent_LineComplete(Typewriter* tw);
+void TypewriterRegisterCallback_LineComplete(Typewriter* tw, GameObject* registrar, TypewriterEventCallbackSignature func);
+void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, GameObject* registrar);
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
 
@@ -127,6 +144,7 @@ struct DialogueOptions {
     i32 number;
     i32 x;
     i32 y;
+    bool visible;
     float optionSeparationAdd;
     float optionBoxHeightAdd;
     TextDrawingStyle *textStyle;
@@ -142,8 +160,8 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt);
 struct DialogueSequence {
     Typewriter typewriter;
     DialogueOptions options;
-    List dialogue;
-    List dialogueOptions;
+    StringList dialogue;
+    StringList dialogueOptions;
 };
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp);
 void DialogueSequenceUpdate(void* _dseq);
@@ -151,6 +169,7 @@ void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 lineCount);
 
 struct TextDrawingStyle {
     Color color;
@@ -329,8 +348,6 @@ void CabUpdate(void* cab);
 void CabDraw(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
 GameObject CabPack(Cab* cab);
-
-
 
 struct Skybox {
     Model model;
@@ -813,11 +830,18 @@ void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
     tw->visible = true;
     tw->textCount = stringCount;
     tw->speed = 16.f;
+    tw->autoAdvance = true;
+    tw->autoHide = true;
     tw->autoContinueDelay = 1.f;
     tw->autoHideOnEndDelay = 3.f;
+    tw->_autoAdvanceCountdown = -1.f;
     tw->x = screenWidth / 2;
-    tw->y = screenHeight / 2 + screenHeight / 4;
+    tw->y = screenHeight / 2 - screenHeight / 4 - screenHeight / 8;
     tw->textStyle = &global::textDrawingStyle;
+    ListInit(&tw->textAdvanceCallbacks, 0);
+    ListChangeCapacity(&tw->textAdvanceCallbacks, 5);
+    ListInit(&tw->textAdvanceCallbackRegistrars, 0);
+    ListChangeCapacity(&tw->textAdvanceCallbackRegistrars, 5);
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
@@ -829,25 +853,25 @@ void TypewriterUpdate(void* _tw) {
     float textProgressPrevious = tw->progress;
     tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
     if (tw->progress == length) {
-        if (tw->textIndex + 1 < tw->textCount) {
-            if (textProgressPrevious < tw->progress) {
-                tw->_autoContinueTime = tw->autoContinueDelay;
-            } else {
-                tw->_autoContinueTime = fmaxf(tw->_autoContinueTime - FRAME_TIME, 0.f);
-                if (tw->_autoContinueTime == 0.f) {
-                    _TypewriterAdvanceText(tw);
-                }
+        i32 endJustReached = textProgressPrevious < tw->progress;
+        i32 lastLine = tw->textIndex + 1 == tw->textCount;
+        if (endJustReached) {
+            TypewriterEvent_LineComplete(tw);
+            if (tw->autoAdvance && !lastLine) {
+                tw->_autoAdvanceCountdown = tw->autoContinueDelay;
+            } else if (tw->autoHide && lastLine) {
+                tw->_autoAdvanceCountdown = tw->autoHideOnEndDelay;
             }
-        } else if (tw->textIndex + 1 == tw->textCount) {
-            if (textProgressPrevious < tw->progress) {
-                tw->_autoHideOnEndTime = tw->autoHideOnEndDelay;
-            } else {
-                tw->_autoHideOnEndTime = fmaxf(tw->_autoHideOnEndTime - FRAME_TIME, 0.f);
-                if (tw->_autoHideOnEndTime == 0.f) {
-                    _TypewriterReset(tw);
-                    tw->visible = false;
-                }
-            }
+        } else {
+            tw->_autoAdvanceCountdown = fmaxf(0.f, tw->_autoAdvanceCountdown - FRAME_TIME);
+        }
+
+        i32 autoCountdownFinished = tw->_autoAdvanceCountdown == 0.f;
+        if (tw->autoAdvance && !lastLine && autoCountdownFinished) {
+            _TypewriterAdvanceText(tw);
+        } else if (tw->autoHide && lastLine && autoCountdownFinished) {
+            _TypewriterReset(tw);
+            tw->visible = false;
         }
     }
 }
@@ -875,15 +899,40 @@ void TypewriterDraw(void* _tw) {
     DrawTextPro(textStyle->font, substr.cstr, {(float)tw->x, (float)tw->y}, textAlign, 0.f, 18.f, 1.f, WHITE);
     StringDestroy(substr);
 }
-
 GameObject TypewriterPack(Typewriter* tw) {
     return GameObjectCreate(tw, TypewriterUpdate, nullptr, TypewriterDraw, nullptr);
+}
+void TypewriterEvent_LineComplete(Typewriter* tw) {
+    for (i32 i = 0; i < tw->textAdvanceCallbacks.size; i++) {
+        ((TypewriterEventCallbackSignature)ListGet(&tw->textAdvanceCallbacks, i))(
+            ((GameObject*)ListGet(&tw->textAdvanceCallbackRegistrars, i))->data, tw->textIndex, tw->textCount);
+    }
+}
+void TypewriterRegisterCallback_LineComplete(Typewriter* tw, GameObject* registrar, TypewriterEventCallbackSignature func) {
+    if (ListFind(&tw->textAdvanceCallbackRegistrars, registrar) != -1) {
+        TraceLog(LOG_WARNING, "TypewriterRegisterCallback: GameObject was already registered");
+        return;
+    }
+    ListPushBack(&tw->textAdvanceCallbacks, func);
+    ListPushBack(&tw->textAdvanceCallbackRegistrars, (void*)registrar);
+}
+void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, GameObject* registrar) {
+    i32 ind = ListFind(&tw->textAdvanceCallbackRegistrars, registrar) == -1;
+    if (ind == -1) {
+        TraceLog(LOG_WARNING, "TypewriterUnregisterCallback: GameObject was not registered");
+        return;
+    }
+
+    // TODO: Implement list delete
+    //ListDelete(&tw->textAdvanceCallbacks, func);
+    //ListDelete(&tw->textAdvanceCallbackRegistrars, registrar);
 }
 
 void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
     dopt->index = 0;
     dopt->options = str;
     dopt->number = num;
+    dopt->visible = 1;
     dopt->x = screenWidth / 2;
     dopt->y = screenHeight / 2 + screenHeight / 4;
     dopt->textStyle = &global::textDrawingStyle;
@@ -901,40 +950,44 @@ void DialogueOptionsUpdate(void* _dopt) {
     DialogueOptionsHandleInput(dopt);
 }
 void DialogueOptionsDraw(void* _dopt) {
-    DialogueOptions* dialogueOptions = (DialogueOptions*)_dopt;
-    String* options = dialogueOptions->options;
-    TextDrawingStyle* textStyle = dialogueOptions->textStyle;
-    v2* textSize = (v2*)malloc(dialogueOptions->number * sizeof(v2));
+    DialogueOptions* dopt = (DialogueOptions*)_dopt;
+    if (!dopt->visible) {
+        return;
+    }
+    
+    String* options = dopt->options;
+    TextDrawingStyle* textStyle = dopt->textStyle;
+    v2* textSize = (v2*)malloc(dopt->number * sizeof(v2));
     v2 boxSize = {0.f, 0.f};
     // TODO: These measurements can be done as preprocessing. No need for the memory allocation every fucking frame
-    for (i32 i = 0; i < dialogueOptions->number; i++) {
-        String option = dialogueOptions->options[i];
+    for (i32 i = 0; i < dopt->number; i++) {
+        String option = dopt->options[i];
         textSize[i] = MeasureTextEx(textStyle->font, option.cstr, textStyle->size, textStyle->charSpacing);
         boxSize = v2maxv2(boxSize, textSize[i]);
     }
     boxSize.x += 64.f;
-    for (i32 i = 0; i < dialogueOptions->number; i++) {
+    for (i32 i = 0; i < dopt->number; i++) {
         Color textTint = GRAY;
         Color boxTint = GRAY;
-        if (i == dialogueOptions->index) {
+        if (i == dopt->index) {
             textTint = WHITE;
             boxTint = WHITE;
         }
 
-        String option = dialogueOptions->options[i];
-        i32 x = dialogueOptions->x;
-        i32 y = dialogueOptions->y + i * ((i32)textStyle->size + dialogueOptions->optionSeparationAdd);
+        String option = dopt->options[i];
+        i32 x = dopt->x;
+        i32 y = dopt->y + i * ((i32)textStyle->size + dopt->optionSeparationAdd);
         float xf = (float)x;
         float yf = (float)y;
         float boxHeightAdd = 24.f;
         rect2 dialogueBoxRect = {
             xf - boxSize.x / 2.f,
-            yf - boxSize.y / 2.f - dialogueOptions->optionBoxHeightAdd / 2.f,
+            yf - boxSize.y / 2.f - dopt->optionBoxHeightAdd / 2.f,
             boxSize.x,
-            boxSize.y + dialogueOptions->optionBoxHeightAdd};
+            boxSize.y + dopt->optionBoxHeightAdd};
         DrawTextureNPatch(
-            dialogueOptions->npatchTexture,
-            dialogueOptions->npatchInfo,
+            dopt->npatchTexture,
+            dopt->npatchInfo,
             dialogueBoxRect,
             {0.f, 0.f},
             0.f,
@@ -956,37 +1009,51 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
 }
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp) {
-    List* list = (List*)MemoryPoolReserve(mp, sizeof(List));
+    StringList* dialogue = &dseq->dialogue;
     const i32 stringCount = 50;
-    StringListInit(list, stringCount, mp);
+    StringListInit(dialogue, stringCount, mp);
+    StringList* dialogueOptions = &dseq->dialogueOptions;
+    StringListInit(dialogueOptions, stringCount, mp);
 
     switch (ind) {
         case 0:
-            StringListAdd(list, mp, "This is definitely text");
-            StringListAdd(list, mp, "Surely this is pretty close in memory");
-            StringListAdd(list, mp, "Hopefully I won't run out lol");
+            StringListAdd(dialogue, mp, "This is definitely text");
+            StringListAdd(dialogue, mp, "Surely this is pretty close in memory");
+            StringListAdd(dialogue, mp, "Hopefully I won't run out lol");
+            StringListAdd(dialogueOptions, mp, "Yes");
+            StringListAdd(dialogueOptions, mp, "No");
+            StringListAdd(dialogueOptions, mp, "Idk");
             break;
         default:
             break;
     }
+    TypewriterInit(&dseq->typewriter, dialogue->data, 3);
+    dseq->typewriter.autoAdvance = true;
+    dseq->typewriter.autoHide = false;
+    DialogueOptionsInit(&dseq->options, dialogueOptions->data, 3);
+    dseq->options.visible = false;
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
-    DialogueOptionsUpdate(&dseq->dialogueOptions);
+    DialogueOptionsUpdate(&dseq->options);
     TypewriterUpdate(&dseq->typewriter);
 }
 void DialogueSequenceDraw(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
-    DialogueOptionsDraw(&dseq->dialogueOptions);
+    DialogueOptionsDraw(&dseq->options);
     TypewriterDraw(&dseq->typewriter);
 }
 void DialogueSequenceFree(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
-    ListDestroy(&dseq->dialogue);
-    ListDestroy(&dseq->dialogueOptions);
 }
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
+}
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 lineCount) {
+    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+    if (lineCurrent == lineCount - 1) {
+        dseq->options.visible = true;
+    }
 }
 
 void InputInit(Input* input) {
@@ -1469,6 +1536,14 @@ void* ListGet(List* list, u32 ind) {
     }
     return list->data[ind];
 }
+i32 ListFind(List* list, void* val) {
+    for (i32 i = 0; i < list->size; i++) {
+        if (ListGet(list, i) == val) {
+            return i;
+        }
+    }
+    return -1;
+}
 void ListSet(List* list, u32 ind, void* val) {
     list->data[ind] = val;
 }
@@ -1483,12 +1558,12 @@ void ListPushBack(List* list, void* val) {
     list->data[list->size] = val;
     list->size++;
 }
-void StringListInit(List* list, u32 stringCount, MemoryPool* mp) {
-    list->data = (void**)MemoryPoolReserve(mp, sizeof(String) * stringCount);
+void StringListInit(StringList* list, u32 stringCount, MemoryPool* mp) {
+    list->data = (String*)MemoryPoolReserve(mp, sizeof(String) * stringCount);
     list->capacity = stringCount;
     list->size = 0;
 }
-void StringListAdd(List* list, MemoryPool* mp, const char* cstr) {
+void StringListAdd(StringList* list, MemoryPool* mp, const char* cstr) {
     if (list->size + 1 >= list->capacity) {
         TraceLog(LOG_ERROR, "StringList: Out of strings");
         return;
@@ -1500,6 +1575,13 @@ void StringListAdd(List* list, MemoryPool* mp, const char* cstr) {
     str->length = cstrLen;
     strcpy(str->cstr, cstr);
     list->size++;
+}
+String* StringListGet(StringList* list, u32 ind) {
+    if (ind >= list->size) {
+        TraceLog(LOG_ERROR, "StringList: index '%i' is out of range");
+        return nullptr;
+    }
+    return list->data + ind;
 }
 
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
@@ -1877,7 +1959,9 @@ i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mp) {
 
     DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(mp, sizeof(DialogueSequence));
     DialogueSequenceInit(dseq, 0, mp);
-    go[goCount] = DialogueSequencePack(dseq); goCount++;
+    go[goCount] = DialogueSequencePack(dseq);
+    TypewriterRegisterCallback_LineComplete(&dseq->typewriter, &go[goCount], DialogueHandleTypewriter_TextAdvance);
+    goCount++;
 
     return goCount;
 }
