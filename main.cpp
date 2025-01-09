@@ -66,6 +66,10 @@ struct MemoryPool {
 MemoryPool MemoryPoolCreate(i32 size);
 void MemoryPoolDestroy(MemoryPool* mm);
 void* MemoryPoolReserve(MemoryPool* mm, i32 size);
+template <typename T>
+T* MemoryReserve();
+template <typename T>
+T* MemoryReserve(u32 num);
 
 struct GameObject {
     void (*Update) (void*);
@@ -91,13 +95,19 @@ i32 ListFind(List* list, void* val);
 void ListSet(List* list, u32 ind, void* val);
 void ListPushBack(List* list, void* val);
 
+typedef List IntList;
+void IntListInit(IntList* list, u32 size);
+void IntListPushBack(IntList* list, i32 val);
+i32 IntListGet(IntList* list, u32 ind);
+void IntListSet(IntList* list, u32 ind, i32 val);
+
 struct StringList {
     String* data;
     u32 size;
     u32 capacity;
 };
-void StringListInit(StringList* list, u32 size, MemoryPool* mp);
-void StringListAdd(StringList* list, MemoryPool* mp, const char* str);
+void StringListInit(StringList* list, u32 size);
+void StringListAdd(StringList* list, const char* cstr);
 String* StringListGet(StringList* list, u32 ind);
 
 struct String {
@@ -134,8 +144,8 @@ void TypewriterDraw(void* tw);
 GameObject TypewriterPack(Typewriter* tw);
 // TODO: Encapsulate this functionality in a signal processing structure
 void TypewriterEvent_LineComplete(Typewriter* tw);
-void TypewriterRegisterCallback_LineComplete(Typewriter* tw, GameObject* registrar, TypewriterEventCallbackSignature func);
-void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, GameObject* registrar);
+void TypewriterRegisterCallback_LineComplete(Typewriter* tw, void* registrar, TypewriterEventCallbackSignature func);
+void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, void* registrar);
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
 
@@ -158,13 +168,12 @@ void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
 GameObject DialogueOptionsPack(DialogueOptions* dopt);
 
-#define SEQUENCE_LENGTH_MAX 16
 struct DialogueSequence {
     Typewriter typewriter;
     DialogueOptions options;
-    List sections;
+    IntList sections;
 };
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp);
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
@@ -174,8 +183,9 @@ void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 line
 struct DialogueSequenceSection {
     StringList* text;
     StringList* options;
+    List* link;
 };
-DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp);
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
 
 struct TextDrawingStyle {
     Color color;
@@ -578,7 +588,10 @@ namespace global {
     };
 
     Camera* currentCamera = nullptr;
-    TextDrawingStyle textDrawingStyle;
+    TextDrawingStyle textDrawingStyle = {};
+    MemoryPool localMemoryPool = {};
+    MemoryPool persistentMemoryPool = {};
+    MemoryPool* memory;
 }
 
 void LoadGameShaders() {
@@ -679,13 +692,6 @@ void UnloadGameImages() {
 }
 
 void LoadGameResources() {
-    TextDrawingStyle textDrawingStyle = {};
-    textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = GetFontDefault();
-    textDrawingStyle.size = 24.f;
-    textDrawingStyle.color = WHITE;
-    global::textDrawingStyle = textDrawingStyle;
-
     LoadGameShaders();
     LoadGameModels();
     LoadGameTextures();
@@ -703,8 +709,8 @@ void UnloadGameResources() {
 const i32 screenWidth = 1440;
 const i32 screenHeight = 800;
 
-i32 SceneSetup01(GameObject* goOut, MemoryPool* mm);
-i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mm);
+i32 SceneSetup01(GameObject* goOut);
+i32 SceneSetup_DialogueTest(GameObject* go);
 
 i32 main() {
     SetTraceLogLevel(4);
@@ -712,13 +718,23 @@ i32 main() {
     SetTargetFPS(FRAMERATE);
     DisableCursor();
 
-    MemoryPool memoryPool = MemoryPoolCreate(1 << 16);
+    global::localMemoryPool = MemoryPoolCreate(1 << 16);
+    global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
+    global::memory = &global::localMemoryPool;
+
+    TextDrawingStyle textDrawingStyle = {};
+    textDrawingStyle.charSpacing = 1;
+    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.size = 24.f;
+    textDrawingStyle.color = WHITE;
+    global::textDrawingStyle = textDrawingStyle;
+
     LoadGameResources();
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    //i32 gameObjectCount = SceneSetup01(gameObject, &memoryManager);
-    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject, &memoryPool);
+    //i32 gameObjectCount = SceneSetup01(gameObject);
+    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -761,7 +777,8 @@ i32 main() {
         }
     }
 
-    MemoryPoolDestroy(&memoryPool);
+    MemoryPoolDestroy(&global::localMemoryPool);
+    MemoryPoolDestroy(&global::persistentMemoryPool);
     UnloadGameResources();
 
     return(0);
@@ -791,6 +808,14 @@ void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
         mm->location = imini(alignedLocation, mm->size);
     }
     return reserve;
+}
+template<typename T>
+T* MemoryReserve() {
+    return (T*)MemoryPoolReserve(global::memory, sizeof(T));
+}
+template <typename T>
+T* MemoryReserve(u32 num) {
+    return (T*)MemoryPoolReserve(global::memory, sizeof(T) * num);
 }
 
 String StringCreate(char* text) {
@@ -911,18 +936,18 @@ GameObject TypewriterPack(Typewriter* tw) {
 void TypewriterEvent_LineComplete(Typewriter* tw) {
     for (i32 i = 0; i < tw->textAdvanceCallbacks.size; i++) {
         ((TypewriterEventCallbackSignature)ListGet(&tw->textAdvanceCallbacks, i))(
-            ((GameObject*)ListGet(&tw->textAdvanceCallbackRegistrars, i))->data, tw->textIndex, tw->textCount);
+            ListGet(&tw->textAdvanceCallbackRegistrars, i), tw->textIndex, tw->textCount);
     }
 }
-void TypewriterRegisterCallback_LineComplete(Typewriter* tw, GameObject* registrar, TypewriterEventCallbackSignature func) {
+void TypewriterRegisterCallback_LineComplete(Typewriter* tw, void* registrar, TypewriterEventCallbackSignature func) {
     if (ListFind(&tw->textAdvanceCallbackRegistrars, registrar) != -1) {
         TraceLog(LOG_WARNING, "TypewriterRegisterCallback: GameObject was already registered");
         return;
     }
     ListPushBack(&tw->textAdvanceCallbacks, func);
-    ListPushBack(&tw->textAdvanceCallbackRegistrars, (void*)registrar);
+    ListPushBack(&tw->textAdvanceCallbackRegistrars, registrar);
 }
-void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, GameObject* registrar) {
+void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, void* registrar) {
     i32 ind = ListFind(&tw->textAdvanceCallbackRegistrars, registrar) == -1;
     if (ind == -1) {
         TraceLog(LOG_WARNING, "TypewriterUnregisterCallback: GameObject was not registered");
@@ -1014,21 +1039,38 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
     return GameObjectCreate(dopt, DialogueOptionsUpdate, nullptr, DialogueOptionsDraw, nullptr);
 }
 
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp) {
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     ListInit(&dseq->sections, 0);
     ListChangeCapacity(&dseq->sections, 50);
     switch (ind) {
         case 0:
         {
-            DialogueSequenceSection* dss = DialogueSequenceSectionCreate(3, 3, mp);
-            StringList* text = dss->text;
-            StringList* opt = dss->options;
-            StringListAdd(text, mp, "This is definitely text");
-            StringListAdd(text, mp, "Surely this is pretty close in memory");
-            StringListAdd(text, mp, "Hopefully I won't run out lol");
-            StringListAdd(opt, mp, "Yes");
-            StringListAdd(opt, mp, "No");
-            StringListAdd(opt, mp, "Idk");
+            DialogueSequenceSection* dss = nullptr;
+            StringList* text = nullptr;
+            StringList* opt = nullptr;
+            IntList* link = nullptr;
+
+            dss = DialogueSequenceSectionCreate(3, 3);
+            text = dss->text;
+            opt = dss->options;
+            link = dss->link;
+            StringListAdd(text, "This is definitely text");
+            StringListAdd(text, "Surely this is pretty close in memory");
+            StringListAdd(text, "Hopefully I won't run out lol");
+            StringListAdd(opt, "You will");
+            StringListAdd(opt, "No");
+            StringListAdd(opt, "Repeat that please");
+            IntListPushBack(link, 1);
+            IntListPushBack(link, -1);
+            IntListPushBack(link, 0);
+            ListPushBack(&dseq->sections, dss);
+
+            dss = DialogueSequenceSectionCreate(1, 0);
+            text = dss->text;
+            opt = dss->options;
+            link = dss->link;
+            StringListAdd(text, "I'm glad we agree, truly!");
+            IntListPushBack(link, -1);
             ListPushBack(&dseq->sections, dss);
             break;
         }
@@ -1040,6 +1082,8 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind, MemoryPool* mp) {
     dseq->typewriter.autoHide = false;
     DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
     dseq->options.visible = false;
+
+    TypewriterRegisterCallback_LineComplete(&dseq->typewriter, dseq, DialogueHandleTypewriter_TextAdvance);
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1054,12 +1098,15 @@ void DialogueSequenceDraw(void* _dseq) {
 void DialogueSequenceFree(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
 }
-DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp) {
-    DialogueSequenceSection* dss = (DialogueSequenceSection*)MemoryPoolReserve(mp, sizeof(DialogueSequenceSection));
-    dss->text = (StringList*)MemoryPoolReserve(mp, sizeof(StringList));
-    StringListInit(dss->text, textCount, mp);
-    dss->options = (StringList*)MemoryPoolReserve(mp, sizeof(StringList));
-    StringListInit(dss->options, optionCount, mp);
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount) {
+    DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>();
+    dss->text = MemoryReserve<StringList>();
+    StringListInit(dss->text, textCount);
+    dss->options = MemoryReserve<StringList>();
+    StringListInit(dss->options, optionCount);
+    dss->link = MemoryReserve<List>();
+    ListInit(dss->link, 0);
+    ListChangeCapacity(dss->link, 50);
     return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
@@ -1574,12 +1621,26 @@ void ListPushBack(List* list, void* val) {
     list->data[list->size] = val;
     list->size++;
 }
-void StringListInit(StringList* list, u32 stringCount, MemoryPool* mp) {
-    list->data = (String*)MemoryPoolReserve(mp, sizeof(String) * stringCount);
-    list->capacity = stringCount;
+
+inline void IntListInit(IntList* list, u32 size) {
+    ListInit(list, size);
+}
+inline void IntListPushBack(IntList* list, i32 val) {
+    ListPushBack(list, (void*)val);
+}
+i32 IntListGet(IntList* list, u32 ind) {
+    return (i32)list->data[ind];
+}
+void IntListSet(IntList* list, u32 ind, i32 val) {
+    list->data[ind] = (void*)val;
+}
+
+void StringListInit(StringList* list, u32 size) {
+    list->data = MemoryReserve<String>(size);
+    list->capacity = size;
     list->size = 0;
 }
-void StringListAdd(StringList* list, MemoryPool* mp, const char* cstr) {
+void StringListAdd(StringList* list, const char* cstr) {
     if (list->size >= list->capacity) {
         TraceLog(LOG_ERROR, "StringList: Out of strings");
         return;
@@ -1587,9 +1648,10 @@ void StringListAdd(StringList* list, MemoryPool* mp, const char* cstr) {
     String* data = (String*)list->data;
     i32 cstrLen = strlen(cstr);
     String* str = data + list->size;
-    str->cstr = (char*)MemoryPoolReserve(mp, sizeof(char) * cstrLen);
+    str->cstr = MemoryReserve<char>(cstrLen + 1);
     str->length = cstrLen;
     strcpy(str->cstr, cstr);
+    str->cstr[cstrLen] = '\0';
     list->size++;
 }
 String* StringListGet(StringList* list, u32 ind) {
@@ -1902,10 +1964,10 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
 #endif
 }
 
-i32 SceneSetup01(GameObject* goOut, MemoryPool* mp) {
+i32 SceneSetup01(GameObject* goOut) {
     i32 goCount = 0;
 
-    CameraManager* camMan = (CameraManager*)MemoryPoolReserve(mp, sizeof(CameraManager));
+    CameraManager* camMan = (CameraManager*)MemoryPoolReserve(global::memory, sizeof(CameraManager));
     CameraManagerInit(camMan, CameraGetDefault());
     goOut[goCount] = CameraManagerPack(camMan); goCount++;
 
@@ -1920,20 +1982,20 @@ i32 SceneSetup01(GameObject* goOut, MemoryPool* mp) {
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
     hgi.resdiv = 2;
-    Heightmap* hm = (Heightmap*)MemoryPoolReserve(mp, sizeof(Heightmap));
+    Heightmap* hm = (Heightmap*)MemoryPoolReserve(global::memory, sizeof(Heightmap));
     HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
     global::groups["terrainHeightmap"] = (void*)&hm;
     goOut[goCount] = HeightmapPack(hm); goCount++;
 
-    Typewriter* tw = (Typewriter*)MemoryPoolReserve(mp, sizeof(Typewriter));
+    Typewriter* tw = (Typewriter*)MemoryPoolReserve(global::memory, sizeof(Typewriter));
     TypewriterInit(tw, &global::dialogue[1], 2);
     goOut[goCount] = TypewriterPack(tw); goCount++;
 
-    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryPoolReserve(mp, sizeof(DialogueOptions));
+    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryPoolReserve(global::memory, sizeof(DialogueOptions));
     DialogueOptionsInit(dialogueOptions, &global::dialogueOptions[0], 3);
     goOut[goCount] = DialogueOptionsPack(dialogueOptions); goCount++;
 
-    Skybox* skybox = (Skybox*)MemoryPoolReserve(mp, sizeof(Skybox));
+    Skybox* skybox = (Skybox*)MemoryPoolReserve(global::memory, sizeof(Skybox));
     skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
     skybox->shader = global::shaders[global::SHADER_SKYBOX];
     {
@@ -1950,33 +2012,24 @@ i32 SceneSetup01(GameObject* goOut, MemoryPool* mp) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    ParticleSystem* psys = (ParticleSystem*)MemoryPoolReserve(mp, sizeof(ParticleSystem));
+    ParticleSystem* psys = (ParticleSystem*)MemoryPoolReserve(global::memory, sizeof(ParticleSystem));
     ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
     psys->velocity = {1.f, 0.f, 0.f};
     goOut[goCount] = ParticleSystemPack(psys); goCount++;
 
-    Cab* cab = (Cab*)MemoryPoolReserve(mp, sizeof(Cab));
+    Cab* cab = (Cab*)MemoryPoolReserve(global::memory, sizeof(Cab));
     CabInit(cab);
     goOut[goCount] = CabPack(cab); goCount++;
 
     return goCount;
 };
 
-i32 SceneSetup_DialogueTest(GameObject* go, MemoryPool* mp) {
+i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
-
-    // Typewriter* tw = (Typewriter*)MemoryManagerReserve(mm, sizeof(Typewriter));
-    // TypewriterInit(tw, &global::dialogue[1], 2);
-    // go[goCount] = TypewriterPack(tw); goCount++;
-
-    // DialogueOptions* dopts = (DialogueOptions*)MemoryManagerReserve(mm, sizeof(DialogueOptions));
-    // DialogueOptionsInit(dopts, &global::dialogueOptions[0], 3);
-    // go[goCount] = DialogueOptionsPack(dopts); goCount++;
-
-    DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(mp, sizeof(DialogueSequence));
-    DialogueSequenceInit(dseq, 0, mp);
+    
+    DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(global::memory, sizeof(DialogueSequence));
+    DialogueSequenceInit(dseq, 0);
     go[goCount] = DialogueSequencePack(dseq);
-    TypewriterRegisterCallback_LineComplete(&dseq->typewriter, &go[goCount], DialogueHandleTypewriter_TextAdvance);
     goCount++;
 
     return goCount;
