@@ -86,7 +86,7 @@ struct List {
     u32 capacity;
 };
 List ListCreate(u32 size);
-void ListInit(List* list, u32 size);
+void ListInit(List* list, u32 capacity = 10);
 void ListDestroy(List* list);
 void ListResize(List* list, u32 size);
 void ListChangeCapacity(List* list, u32 capacity);
@@ -96,7 +96,7 @@ void ListSet(List* list, u32 ind, void* val);
 void ListPushBack(List* list, void* val);
 
 typedef List IntList;
-void IntListInit(IntList* list, u32 size);
+void IntListInit(IntList* list, u32 capacity = 10);
 void IntListPushBack(IntList* list, i32 val);
 i32 IntListGet(IntList* list, u32 ind);
 void IntListSet(IntList* list, u32 ind, i32 val);
@@ -917,10 +917,8 @@ void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
     tw->x = screenWidth / 2;
     tw->y = screenHeight / 2 - screenHeight / 4 - screenHeight / 8;
     tw->textStyle = &global::textDrawingStyle;
-    ListInit(&tw->textAdvanceCallbacks, 0);
-    ListChangeCapacity(&tw->textAdvanceCallbacks, 5);
-    ListInit(&tw->textAdvanceCallbackRegistrars, 0);
-    ListChangeCapacity(&tw->textAdvanceCallbackRegistrars, 5);
+    ListInit(&tw->textAdvanceCallbacks);
+    ListInit(&tw->textAdvanceCallbackRegistrars);
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
@@ -1088,8 +1086,7 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
 }
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
-    ListInit(&dseq->sections, 0);
-    ListChangeCapacity(&dseq->sections, 50);
+    ListInit(&dseq->sections, 50);
     switch (ind) {
         case 0:
         {
@@ -1153,8 +1150,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     dss->options = MemoryReserve<StringList>();
     StringListInit(dss->options, optionCount);
     dss->link = MemoryReserve<List>();
-    ListInit(dss->link, 0);
-    ListChangeCapacity(dss->link, 50);
+    ListInit(dss->link, 50);
     return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
@@ -1599,18 +1595,14 @@ List ListCreate(u32 size) {
     ListInit(&list, size);
     return list;
 }
-void ListInit(List* list, u32 size) {
-    if (size == 0) {
+void ListInit(List* list, u32 capacity) {
+    if (capacity == 0) {
         list->data = nullptr;
     } else {
-        list->data = (void**)malloc(size * sizeof(void*));
+        list->data = (void**)malloc(capacity * sizeof(void*));
     }
     list->size = 0;
-    while (list->size < size) {
-        list->data[list->size] = 0;
-        list->size++;
-    }
-    list->capacity = list->size;
+    list->capacity = capacity;
 }
 void ListDestroy(List* list) {
     if (list->data != nullptr) {
@@ -1633,10 +1625,23 @@ void ListResize(List* list, u32 size) {
     list->size = size;
 }
 void ListChangeCapacity(List* list, u32 capacity) {
-    if (list->data != nullptr) {
-        list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
-    } else {
-        list->data = (void**)malloc(sizeof(void*) * capacity);
+    if (capacity < list->size) {
+        TraceLog(LOG_ERROR, "List: Couldn't change capacity to be smaller than list size");
+        return;
+    }
+    if (capacity != list->capacity) {
+        if (capacity == 0 && list->data != nullptr) { // this shouldn't ever happen
+            free(list->data);
+            list->data = nullptr;
+        } else {
+            if (list->data != nullptr) {
+                if (list->data != nullptr) {
+                    list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
+                } else {
+                    list->data = (void**)malloc(sizeof(void*) * capacity);
+                }
+            }
+        }
     }
     list->capacity = capacity;
 }
@@ -1670,8 +1675,8 @@ void ListPushBack(List* list, void* val) {
     list->size++;
 }
 
-inline void IntListInit(IntList* list, u32 size) {
-    ListInit(list, size);
+inline void IntListInit(IntList* list, u32 capacity) {
+    ListInit(list, capacity);
 }
 inline void IntListPushBack(IntList* list, i32 val) {
     ListPushBack(list, (void*)val);
