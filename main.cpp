@@ -4,6 +4,7 @@
 #include "stdint.h"
 #include "stdio.h"
 #include "rlgl.h"
+#include "assert.h"
 
 #include <unordered_map>
 #include <string>
@@ -18,6 +19,7 @@ using std::unordered_map;
 
 struct MemoryPool;
 struct GameObject;
+struct EventHandler;
 struct List;
 struct String;
 struct StringList;
@@ -70,6 +72,10 @@ template <typename T>
 T* MemoryReserve();
 template <typename T>
 T* MemoryReserve(u32 num);
+template <typename T>
+T* MemoryReservePersistent();
+template <typename T>
+T* MemoryReservePersistent(u32 num);
 
 struct GameObject {
     void (*Update) (void*);
@@ -79,6 +85,24 @@ struct GameObject {
     void* data;
 };
 GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
+
+typedef void(*EventCallbackSignature)(void* registrar, void* args);
+enum EVENT_HANDLER_EVENTS {
+    EVENT_TYPEWRITER_LINE_COMPLETE,
+    EVENT_COUNT
+};
+struct EventArgs_TypewriterLineComplete {
+    i32 lineCurrent;
+    i32 lineCount;
+};
+struct EventHandler {
+    List* callbacks[EVENT_COUNT];
+    List* registrars[EVENT_COUNT];
+};
+EventHandler EventHandlerCreate();
+void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback);
+void EventHandlerUnregisterEvent(u32 ind, void* registrar);
+void EventHandlerCallEvent(void* caller, u32 ind, void* args);
 
 struct List {
     void** data;
@@ -135,17 +159,14 @@ struct Typewriter {
     float speed;
     float progress;
     TextDrawingStyle* textStyle;
-    List textAdvanceCallbacks;
-    List textAdvanceCallbackRegistrars;
 };
 void TypewriterInit(Typewriter* tw, String* string, i32 stringCount);
 void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
+void TypewriterEvent_LineComplete(Typewriter* tw);
 GameObject TypewriterPack(Typewriter* tw);
 // TODO: Encapsulate this functionality in a signal processing structure
-void TypewriterEvent_LineComplete(Typewriter* tw);
-void TypewriterRegisterCallback_LineComplete(Typewriter* tw, void* registrar, TypewriterEventCallbackSignature func);
-void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, void* registrar);
+
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
 
@@ -179,8 +200,9 @@ void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 lineCount);
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, void* _args);
 struct DialogueSequenceSection {
+
     StringList* text;
     StringList* options;
     List* link;
@@ -609,7 +631,7 @@ namespace global {
     TextDrawingStyle debugDrawingStyle = {};
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
-    MemoryPool* memory;
+    EventHandler eventHandler;
 }
 
 void LoadGameShaders() {
@@ -757,7 +779,8 @@ i32 main() {
 
     global::localMemoryPool = MemoryPoolCreate(1 << 16);
     global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
-    global::memory = &global::localMemoryPool;
+
+    global::eventHandler = EventHandlerCreate();
 
     TextDrawingStyle textDrawingStyle = {};
     textDrawingStyle.charSpacing = 1;
@@ -767,7 +790,7 @@ i32 main() {
     global::textDrawingStyle = textDrawingStyle;
 
     global::debugDrawingStyle.charSpacing = 1;
-
+    
     LoadGameResources();
     InputInit(&global::input);
 
@@ -845,10 +868,7 @@ void MemoryPoolDestroy(MemoryPool* mm) {
     }
 }
 void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
-    if (mm->location + size >= mm->size) {
-        TraceLog(LOG_ERROR, "Memory pool: Out of memory!");
-        return nullptr;
-    }
+    assert(mm->location + size < mm->size); // Out of memory check
     void* reserve = (byte*)mm->buffer + mm->location;
     mm->location += size;
     if (mm->location % sizeof(void*) != 0) {
@@ -859,11 +879,19 @@ void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
 }
 template<typename T>
 T* MemoryReserve() {
-    return (T*)MemoryPoolReserve(global::memory, sizeof(T));
+    return (T*)MemoryPoolReserve(&global::localMemoryPool, sizeof(T));
 }
 template <typename T>
 T* MemoryReserve(u32 num) {
-    return (T*)MemoryPoolReserve(global::memory, sizeof(T) * num);
+    return (T*)MemoryPoolReserve(&global::localMemoryPool, sizeof(T) * num);
+}
+template <typename T>
+T* MemoryReservePersistent() {
+    return (T*)MemoryPoolReserve(&global::persistentMemoryPool, sizeof(T));
+}
+template <typename T>
+T* MemoryReservePersistent(u32 num) {
+    return (T*)MemoryPoolReserve(&global::persistentMemoryPool, sizeof(T) * num);
 }
 
 String StringCreate(char* text) {
@@ -917,15 +945,13 @@ void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
     tw->x = screenWidth / 2;
     tw->y = screenHeight / 2 - screenHeight / 4 - screenHeight / 8;
     tw->textStyle = &global::textDrawingStyle;
-    ListInit(&tw->textAdvanceCallbacks);
-    ListInit(&tw->textAdvanceCallbackRegistrars);
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
     if (tw->text == nullptr) {
         return;
     }
-
+    
     float length = (float)tw->text[tw->textIndex].length;
     float textProgressPrevious = tw->progress;
     tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
@@ -980,29 +1006,10 @@ GameObject TypewriterPack(Typewriter* tw) {
     return GameObjectCreate(tw, TypewriterUpdate, nullptr, TypewriterDraw, nullptr);
 }
 void TypewriterEvent_LineComplete(Typewriter* tw) {
-    for (i32 i = 0; i < tw->textAdvanceCallbacks.size; i++) {
-        ((TypewriterEventCallbackSignature)ListGet(&tw->textAdvanceCallbacks, i))(
-            ListGet(&tw->textAdvanceCallbackRegistrars, i), tw->textIndex, tw->textCount);
-    }
-}
-void TypewriterRegisterCallback_LineComplete(Typewriter* tw, void* registrar, TypewriterEventCallbackSignature func) {
-    if (ListFind(&tw->textAdvanceCallbackRegistrars, registrar) != -1) {
-        TraceLog(LOG_WARNING, "TypewriterRegisterCallback: GameObject was already registered");
-        return;
-    }
-    ListPushBack(&tw->textAdvanceCallbacks, func);
-    ListPushBack(&tw->textAdvanceCallbackRegistrars, registrar);
-}
-void TypewriterUnregisterCallback_LineComplete(Typewriter* tw, void* registrar) {
-    i32 ind = ListFind(&tw->textAdvanceCallbackRegistrars, registrar) == -1;
-    if (ind == -1) {
-        TraceLog(LOG_WARNING, "TypewriterUnregisterCallback: GameObject was not registered");
-        return;
-    }
-
-    // TODO: Implement list delete
-    //ListDelete(&tw->textAdvanceCallbacks, func);
-    //ListDelete(&tw->textAdvanceCallbackRegistrars, registrar);
+    EventArgs_TypewriterLineComplete args;
+    args.lineCurrent = tw->textIndex;
+    args.lineCount = tw->textCount;
+    EventHandlerCallEvent(tw, EVENT_TYPEWRITER_LINE_COMPLETE, &args);
 }
 
 void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
@@ -1128,7 +1135,7 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
     dseq->options.visible = false;
 
-    TypewriterRegisterCallback_LineComplete(&dseq->typewriter, dseq, DialogueHandleTypewriter_TextAdvance);
+    EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, DialogueHandleTypewriter_TextAdvance);
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1156,9 +1163,10 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
 }
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, i32 lineCurrent, i32 lineCount) {
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, void* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
-    if (lineCurrent == lineCount - 1) {
+    EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
+    if (args->lineCurrent == args->lineCount - 1) {
         dseq->options.visible = true;
     }
 }
@@ -1588,6 +1596,37 @@ GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void
     go.DrawUi = drawUi;
     go.Free = free;
     return go;
+}
+
+EventHandler EventHandlerCreate() {
+    EventHandler eh = {};
+    for (u32 i = 0; i < EVENT_COUNT; i++) {
+        eh.callbacks[i] = MemoryReservePersistent<List>();
+        ListInit(eh.callbacks[i]);
+        eh.registrars[i] = MemoryReservePersistent<List>();
+        ListInit(eh.registrars[i]);
+    }
+    return eh;
+}
+void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback) {
+    assert(ind < EVENT_COUNT); // event doesn't exist
+    assert(ListFind(global::eventHandler.registrars[ind], registrar) == -1); // event already registered
+    ListPushBack(global::eventHandler.callbacks[ind], callback);
+    ListPushBack(global::eventHandler.registrars[ind], registrar);
+}
+void EventHandlerUnregisterEvent(u32 ind, void* registrar) {
+    assert(ind < EVENT_COUNT);
+    assert(ListFind(global::eventHandler.registrars[ind], registrar) != -1);
+    // TODO: remove event
+}
+void EventHandlerCallEvent(void* caller, u32 ind, void* args) {
+    assert(ind < EVENT_COUNT);
+    List* registrars = global::eventHandler.registrars[ind];
+    List* callbacks = global::eventHandler.callbacks[ind];
+    for (u32 i = 0; i < registrars->size; i++) {
+        EventCallbackSignature callback = (EventCallbackSignature)ListGet(callbacks, i);
+        callback(ListGet(registrars, i), args);
+    }
 }
 
 List ListCreate(u32 size) {
@@ -2020,7 +2059,7 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
 i32 SceneSetup01(GameObject* goOut) {
     i32 goCount = 0;
 
-    CameraManager* camMan = (CameraManager*)MemoryPoolReserve(global::memory, sizeof(CameraManager));
+    CameraManager* camMan = MemoryReserve<CameraManager>();
     CameraManagerInit(camMan, CameraGetDefault());
     goOut[goCount] = CameraManagerPack(camMan); goCount++;
 
@@ -2035,20 +2074,12 @@ i32 SceneSetup01(GameObject* goOut) {
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
     hgi.resdiv = 2;
-    Heightmap* hm = (Heightmap*)MemoryPoolReserve(global::memory, sizeof(Heightmap));
+    Heightmap* hm = MemoryReserve<Heightmap>();
     HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
     global::groups["terrainHeightmap"] = (void*)&hm;
     goOut[goCount] = HeightmapPack(hm); goCount++;
 
-    Typewriter* tw = (Typewriter*)MemoryPoolReserve(global::memory, sizeof(Typewriter));
-    TypewriterInit(tw, &global::dialogue[1], 2);
-    goOut[goCount] = TypewriterPack(tw); goCount++;
-
-    DialogueOptions* dialogueOptions = (DialogueOptions*)MemoryPoolReserve(global::memory, sizeof(DialogueOptions));
-    DialogueOptionsInit(dialogueOptions, &global::dialogueOptions[0], 3);
-    goOut[goCount] = DialogueOptionsPack(dialogueOptions); goCount++;
-
-    Skybox* skybox = (Skybox*)MemoryPoolReserve(global::memory, sizeof(Skybox));
+    Skybox* skybox = MemoryReserve<Skybox>();
     skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
     skybox->shader = global::shaders[global::SHADER_SKYBOX];
     {
@@ -2065,12 +2096,12 @@ i32 SceneSetup01(GameObject* goOut) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    ParticleSystem* psys = (ParticleSystem*)MemoryPoolReserve(global::memory, sizeof(ParticleSystem));
+    ParticleSystem* psys = MemoryReserve<ParticleSystem>();
     ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
     psys->velocity = {1.f, 0.f, 0.f};
     goOut[goCount] = ParticleSystemPack(psys); goCount++;
 
-    Cab* cab = (Cab*)MemoryPoolReserve(global::memory, sizeof(Cab));
+    Cab* cab = MemoryReserve<Cab>();
     CabInit(cab);
     goOut[goCount] = CabPack(cab); goCount++;
 
@@ -2080,7 +2111,7 @@ i32 SceneSetup01(GameObject* goOut) {
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
     
-    DialogueSequence* dseq = (DialogueSequence*)MemoryPoolReserve(global::memory, sizeof(DialogueSequence));
+    DialogueSequence* dseq = MemoryReserve<DialogueSequence>();
     DialogueSequenceInit(dseq, 0);
     go[goCount] = DialogueSequencePack(dseq);
     goCount++;
