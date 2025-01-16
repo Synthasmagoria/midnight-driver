@@ -233,28 +233,12 @@ enum INPUT {
     INPUT_DEBUG_DOWN,
     INPUT_COUNT
 };
-enum class INPUT_EC {
-    INPUT_ACCELERATE,
-    INPUT_BREAK,
-    INPUT_TOGGLE_DEBUG,
-    INPUT_LEFT,
-    INPUT_RIGHT,
-    INPUT_DOWN,
-    INPUT_UP,
-    INPUT_DEBUG_LEFT,
-    INPUT_DEBUG_RIGHT,
-    INPUT_DEBUG_FORWARD,
-    INPUT_DEBUG_BACKWARD,
-    INPUT_DEBUG_UP,
-    INPUT_DEBUG_DOWN,
-    INPUT_COUNT
-};
 
 struct Input {
     u32 map[INPUT_COUNT];
-    u32 pressed[INPUT_COUNT];
-    u32 down[INPUT_COUNT];
-    u32 up[INPUT_COUNT];
+    bool pressed[INPUT_COUNT];
+    bool down[INPUT_COUNT];
+    bool up[INPUT_COUNT];
 };
 void InputInit(Input* input);
 void InputUpdate(Input* input);
@@ -659,6 +643,7 @@ namespace global {
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
     EventHandler eventHandler;
+    bool debugEnabled = false;
 }
 
 void LoadGameShaders() {
@@ -790,6 +775,16 @@ void UnloadGameResources() {
     UnloadGameFonts();
 }
 
+void InitGlobals();
+
+void DrawDebug3d();
+void DrawDebugUi();
+
+void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
+
 const i32 screenWidth = 1440;
 const i32 screenHeight = 800;
 
@@ -803,37 +798,23 @@ i32 main() {
     SetTargetFPS(FRAMERATE);
     DisableCursor();
 
-    bool showDebugOverlay = true;
-
-    global::localMemoryPool = MemoryPoolCreate(1 << 16);
-    global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
-
-    global::eventHandler = EventHandlerCreate();
-
-    TextDrawingStyle textDrawingStyle = {};
-    textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = global::fonts[global::FONT_DEBUG];
-    textDrawingStyle.size = 24.f;
-    textDrawingStyle.color = WHITE;
-    global::textDrawingStyle = textDrawingStyle;
-
-    global::debugDrawingStyle.charSpacing = 1;
-    
+    InitGlobals();
     LoadGameResources();
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    //i32 gameObjectCount = SceneSetup01(gameObject);
+    // i32 gameObjectCount = SceneSetup01(gameObject);
     // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
     i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
-        for (i32 i = 0; i < gameObjectCount; i++) {
-            if (gameObject[i].Update != nullptr) {
-                gameObject[i].Update(gameObject[i].data);
-            }
+
+        if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
+            global::debugEnabled = !global::debugEnabled;
         }
+
+        GameObjectsUpdate(gameObject, gameObjectCount);
         
         if (global::currentCamera != nullptr) {
             UpdateGameMaterials(global::currentCamera->position);
@@ -845,43 +826,88 @@ i32 main() {
         ClearBackground(BLACK);
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
-                for (i32 i = 0; i < gameObjectCount; i++) {
-                    if (gameObject[i].Draw3d != nullptr) {
-                        gameObject[i].Draw3d(gameObject[i].data);
-                    }
+                GameObjectsDraw3d(gameObject, gameObjectCount);
+                if (global::debugEnabled) {
+                    DrawDebug3d();
                 }
-                DrawGrid(20, 1.f);
             EndMode3D();
         }
-        for (i32 i = 0; i < gameObjectCount; i++) {
-            if (gameObject[i].DrawUi != nullptr) {
-                gameObject[i].DrawUi(gameObject[i].data);
-            }
-        }
-        if (showDebugOverlay) {
-            DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
-            TextDrawingStyle style = global::textDrawingStyle;
-            v2 drawPos = {4.f, 4.f};
-            DrawTextEx(style.font, "Memory usage:", drawPos, style.size, style.charSpacing, WHITE);
-            drawPos.y += style.size;
-            DrawTextEx(style.font, TextFormat("Local: %i / %i", global::localMemoryPool.location, global::localMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
-            drawPos.y += style.size;
-            DrawTextEx(style.font, TextFormat("Global: %i / %i", global::persistentMemoryPool.location, global::persistentMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+        GameObjectsDrawUi(gameObject, gameObjectCount);
+        if (global::debugEnabled) {
+            DrawDebugUi();
         }
         EndDrawing();
     }
 
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObject[i].Free != nullptr) {
-            gameObject[i].Free(gameObject[i].data);
-        }
-    }
+    GameObjectsFree(gameObject, gameObjectCount);
 
     MemoryPoolDestroy(&global::localMemoryPool);
     MemoryPoolDestroy(&global::persistentMemoryPool);
     UnloadGameResources();
 
     return(0);
+}
+
+void InitGlobals() {
+    global::localMemoryPool = MemoryPoolCreate(1 << 16);
+    global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
+    global::eventHandler = EventHandlerCreate();
+    global::debugEnabled = false;
+
+    TextDrawingStyle textDrawingStyle = {};
+    textDrawingStyle.charSpacing = 1;
+    textDrawingStyle.font = GetFontDefault();
+    textDrawingStyle.size = 24.f;
+    textDrawingStyle.color = WHITE;
+    global::textDrawingStyle = textDrawingStyle;
+    global::debugDrawingStyle = textDrawingStyle;
+}
+
+void DrawDebug3d() {
+    DrawGrid(20, 1.f);
+}
+
+void DrawDebugUi() {
+    DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
+    TextDrawingStyle style = global::textDrawingStyle;
+    v2 drawPos = {4.f, 4.f};
+    DrawTextEx(style.font, "Memory usage:", drawPos, style.size, style.charSpacing, WHITE);
+    drawPos.y += style.size;
+    DrawTextEx(style.font, TextFormat("Local: %i / %i", global::localMemoryPool.location, global::localMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+    drawPos.y += style.size;
+    DrawTextEx(style.font, TextFormat("Global: %i / %i", global::persistentMemoryPool.location, global::persistentMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+}
+
+void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].Update != nullptr) {
+            gameObjects[i].Update(gameObjects[i].data);
+        }
+    }
+}
+
+void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].Draw3d != nullptr) {
+            gameObjects[i].Draw3d(gameObjects[i].data);
+        }
+    }
+}
+
+void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].DrawUi != nullptr) {
+            gameObjects[i].DrawUi(gameObjects[i].data);
+        }
+    }
+}
+
+void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].Free != nullptr) {
+            gameObjects[i].Free(gameObjects[i].data);
+        }
+    }
 }
 
 MemoryPool MemoryPoolCreate(i32 size) {
@@ -1523,15 +1549,14 @@ void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
 }
 void CameraManagerUpdate(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
-    if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
-        camMan->cameraMode = camMan->cameraMode ? 0 : 1;
-        if (camMan->cameraMode) {
-            camMan->debugCamera.position = camMan->playerCamera.position;
-            camMan->debugCamera.target = camMan->playerCamera.target;
-            camMan->debugCamera.projection = camMan->playerCamera.projection;
-            camMan->debugCamera.fovy = camMan->playerCamera.fovy;
-            camMan->debugCamera.up = {0.f, 1.f, 0.f};
-        }
+    camMan->cameraMode = global::debugEnabled;
+
+    if (global::debugEnabled && global::currentCamera != &camMan->debugCamera) {
+        camMan->debugCamera.position = camMan->playerCamera.position;
+        camMan->debugCamera.target = camMan->playerCamera.target;
+        camMan->debugCamera.projection = camMan->playerCamera.projection;
+        camMan->debugCamera.fovy = camMan->playerCamera.fovy;
+        camMan->debugCamera.up = {0.f, 1.f, 0.f};
     }
 
     v2 mouseScroll = GetMouseWheelMoveV();
@@ -2152,7 +2177,6 @@ i32 SceneSetup01(GameObject* goOut) {
 
     return goCount;
 };
-
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
     
@@ -2163,7 +2187,6 @@ i32 SceneSetup_DialogueTest(GameObject* go) {
 
     return goCount;
 }
-
 i32 SceneSetup_ModelTest(GameObject* go) {
     i32 goCount = 0;
 
@@ -2175,6 +2198,8 @@ i32 SceneSetup_ModelTest(GameObject* go) {
     ModelInstance* mi = MemoryReserve<ModelInstance>();
     mi->model = LOAD_MODEL("tree.glb");
     mi->tint = WHITE;
+    mi->position = {0.f};
+    mi->scale = 1.f;
     go[goCount] = ModelInstancePack(mi);
     goCount++;
 
