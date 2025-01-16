@@ -40,6 +40,7 @@ struct Heightmap;
 struct Cab;
 struct Skybox;
 struct CameraManager;
+struct ModelInstance;
 
 typedef uint8_t byte;
 typedef uint8_t u8;
@@ -55,7 +56,6 @@ typedef Rectangle rect2;
 typedef Vector4 v4;
 typedef Vector3 v3;
 typedef Vector2 v2;
-typedef void(*TypewriterEventCallbackSignature)(void*, i32, i32);
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
@@ -95,6 +95,7 @@ struct EventArgs_TypewriterLineComplete {
     i32 lineCurrent;
     i32 lineCount;
 };
+typedef void(*EventCallbackSignature_TypewriterLineComplete)(void*, EventArgs_TypewriterLineComplete*);
 struct EventHandler {
     List* callbacks[EVENT_COUNT];
     List* registrars[EVENT_COUNT];
@@ -200,7 +201,7 @@ void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, void* _args);
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
 struct DialogueSequenceSection {
 
     StringList* text;
@@ -232,11 +233,28 @@ enum INPUT {
     INPUT_DEBUG_DOWN,
     INPUT_COUNT
 };
+enum class INPUT_EC {
+    INPUT_ACCELERATE,
+    INPUT_BREAK,
+    INPUT_TOGGLE_DEBUG,
+    INPUT_LEFT,
+    INPUT_RIGHT,
+    INPUT_DOWN,
+    INPUT_UP,
+    INPUT_DEBUG_LEFT,
+    INPUT_DEBUG_RIGHT,
+    INPUT_DEBUG_FORWARD,
+    INPUT_DEBUG_BACKWARD,
+    INPUT_DEBUG_UP,
+    INPUT_DEBUG_DOWN,
+    INPUT_COUNT
+};
+
 struct Input {
-    i32 map[INPUT_COUNT];
-    i32 pressed[INPUT_COUNT];
-    i32 down[INPUT_COUNT];
-    i32 up[INPUT_COUNT];
+    u32 map[INPUT_COUNT];
+    u32 pressed[INPUT_COUNT];
+    u32 down[INPUT_COUNT];
+    u32 up[INPUT_COUNT];
 };
 void InputInit(Input* input);
 void InputUpdate(Input* input);
@@ -411,6 +429,15 @@ v3 GetCameraForwardNorm(Camera* camera);
 v3 GetCameraUpNorm(Camera* camera);
 v3 GetCameraRightNorm(Camera* camera);
 Camera CameraGetDefault();
+
+struct ModelInstance {
+    Model model;
+    v3 position;
+    float scale;
+    Color tint;
+};
+void ModelInstanceDraw(void* _mi);
+GameObject ModelInstancePack(ModelInstance* mi);
 
 inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
 inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
@@ -768,6 +795,7 @@ const i32 screenHeight = 800;
 
 i32 SceneSetup01(GameObject* goOut);
 i32 SceneSetup_DialogueTest(GameObject* go);
+i32 SceneSetup_ModelTest(GameObject* go);
 
 i32 main() {
     SetTraceLogLevel(4);
@@ -796,7 +824,8 @@ i32 main() {
 
     GameObject gameObject[GAME_OBJECT_MAX];
     //i32 gameObjectCount = SceneSetup01(gameObject);
-    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
+    // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
+    i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -1135,7 +1164,7 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
     dseq->options.visible = false;
 
-    EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, DialogueHandleTypewriter_TextAdvance);
+    EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueHandleTypewriter_TextAdvance);
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1163,7 +1192,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
 }
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, void* _args) {
+void DialogueHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
     if (args->lineCurrent == args->lineCount - 1) {
@@ -1507,14 +1536,15 @@ void CameraManagerUpdate(void* _camMan) {
 
     v2 mouseScroll = GetMouseWheelMoveV();
     camMan->debugCameraSpeed = fclampf(camMan->debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
-    Camera* usingCamera;
     if (camMan->cameraMode) {
         CameraUpdateDebug(&camMan->debugCamera, camMan->debugCameraSpeed);
-        usingCamera = &camMan->debugCamera;
+        global::currentCamera = &camMan->debugCamera;
     } else {
         Cab* cab = (Cab*)global::groups["cab"];
-        CameraUpdate(&camMan->playerCamera, CabGetFrontSeatPosition(cab), {cab->yawRotationStep, 0.f}, cab->direction);
-        usingCamera = &camMan->playerCamera;
+        if (cab != nullptr) {
+            CameraUpdate(&camMan->playerCamera, CabGetFrontSeatPosition(cab), {cab->yawRotationStep, 0.f}, cab->direction);
+            global::currentCamera = &camMan->playerCamera;
+        }
     }
 }
 void CameraManagerDrawUi(void* _camMan) {
@@ -1588,6 +1618,14 @@ Camera CameraGetDefault() {
     return camera;
 }
 
+void ModelInstanceDraw(void* _mi) {
+    ModelInstance *mi = (ModelInstance*)_mi;
+    DrawModel(mi->model, mi->position, mi->scale, mi->tint);
+}
+GameObject ModelInstancePack(ModelInstance* mi) {
+    return GameObjectCreate(mi, nullptr, ModelInstanceDraw, nullptr, nullptr);
+}
+
 GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void*), void(*drawUi)(void*), void(*free)(void*)) {
     GameObject go = {};
     go.data = data;
@@ -1619,13 +1657,20 @@ void EventHandlerUnregisterEvent(u32 ind, void* registrar) {
     assert(ListFind(global::eventHandler.registrars[ind], registrar) != -1);
     // TODO: remove event
 }
-void EventHandlerCallEvent(void* caller, u32 ind, void* args) {
+void EventHandlerCallEvent(void* caller, u32 ind, void* _args) {
     assert(ind < EVENT_COUNT);
     List* registrars = global::eventHandler.registrars[ind];
     List* callbacks = global::eventHandler.callbacks[ind];
     for (u32 i = 0; i < registrars->size; i++) {
         EventCallbackSignature callback = (EventCallbackSignature)ListGet(callbacks, i);
-        callback(ListGet(registrars, i), args);
+        switch(ind) {
+            case EVENT_TYPEWRITER_LINE_COMPLETE:
+            {
+                EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
+                EventCallbackSignature_TypewriterLineComplete callback = (EventCallbackSignature_TypewriterLineComplete)ListGet(callbacks, i);
+                callback(ListGet(registrars, i), args);
+            }
+        }
     }
 }
 
@@ -2114,6 +2159,23 @@ i32 SceneSetup_DialogueTest(GameObject* go) {
     DialogueSequence* dseq = MemoryReserve<DialogueSequence>();
     DialogueSequenceInit(dseq, 0);
     go[goCount] = DialogueSequencePack(dseq);
+    goCount++;
+
+    return goCount;
+}
+
+i32 SceneSetup_ModelTest(GameObject* go) {
+    i32 goCount = 0;
+
+    CameraManager* cm = MemoryReserve<CameraManager>();
+    CameraManagerInit(cm, CameraGetDefault());
+    go[goCount] = CameraManagerPack(cm);
+    goCount++;
+
+    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    mi->model = LOAD_MODEL("tree.glb");
+    mi->tint = WHITE;
+    go[goCount] = ModelInstancePack(mi);
     goCount++;
 
     return goCount;
