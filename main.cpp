@@ -126,6 +126,7 @@ i32 ListFind(List* list, void* val);
 void ListSet(List* list, u32 ind, void* val);
 void ListPushBack(List* list, void* val);
 
+// TODO: Create a proper intlist you evil fuck
 typedef List IntList;
 void IntListInit(IntList* list, u32 capacity = 10);
 void IntListPushBack(IntList* list, i32 val);
@@ -166,10 +167,11 @@ struct Typewriter {
     float speed;
     float progress;
 };
-void TypewriterInit(Typewriter* tw, String* string, i32 stringCount);
+void TypewriterInit(Typewriter* tw);
 void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
 void TypewriterEvent_LineComplete(Typewriter* tw);
+void TypewriterStart(Typewriter* tw, String* str, i32 strCount);
 GameObject TypewriterPack(Typewriter* tw);
 // TODO: Encapsulate this functionality in a signal processing structure
 
@@ -189,7 +191,7 @@ struct DialogueOptions {
     NPatchInfo npatchInfo;
     Texture2D npatchTexture;
 };
-void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num);
+void DialogueOptionsInit(DialogueOptions* dopt);
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
 void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
@@ -199,13 +201,16 @@ struct DialogueSequence {
     Typewriter typewriter;
     DialogueOptions options;
     IntList sections;
+    i32 sectionIndex;
 };
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
+void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
+void DialogueSequenceStartSection(i32 ind);
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
 struct DialogueSequenceSection {
@@ -214,6 +219,7 @@ struct DialogueSequenceSection {
     StringList* options;
     List* link;
 };
+DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind);
 DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
 
 struct TextDrawingStyle {
@@ -990,10 +996,10 @@ void StringDestroy(String str) {
     }
 }
 
-void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
-    tw->text = string;
+void TypewriterInit(Typewriter* tw) {
+    tw->text = nullptr;
     tw->visible = true;
-    tw->textCount = stringCount;
+    tw->textCount = 0;
     tw->speed = 16.f;
     tw->autoAdvance = true;
     tw->autoHide = true;
@@ -1008,7 +1014,6 @@ void TypewriterUpdate(void* _tw) {
     if (tw->text == nullptr) {
         return;
     }
-
     float length = (float)tw->text[tw->textIndex].length;
     float textProgressPrevious = tw->progress;
     tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
@@ -1068,12 +1073,19 @@ void TypewriterEvent_LineComplete(Typewriter* tw) {
     args.lineCount = tw->textCount;
     EventHandlerCallEvent(tw, EVENT_TYPEWRITER_LINE_COMPLETE, &args);
 }
+void TypewriterStart(Typewriter* tw, String* str, i32 strCount) {
+    tw->visible = true;
+    tw->text = str;
+    tw->textCount = strCount;
+    tw->textIndex = 0;
+    tw->progress = 0.f;
+}
 
-void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
+void DialogueOptionsInit(DialogueOptions* dopt) {
     dopt->index = 0;
-    dopt->options = str;
-    dopt->count = num;
-    dopt->visible = 1;
+    dopt->options = nullptr;
+    dopt->count = 0;
+    dopt->visible = false;
     dopt->x = screenWidth / 2;
     dopt->y = screenHeight / 2 + screenHeight / 4;
     dopt->textStyle = &global::textDrawingStyle;
@@ -1082,8 +1094,16 @@ void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
     dopt->optionBoxHeightAdd = 32.f;
     dopt->optionSeparationAdd = 48.f;
 }
+void DialogueOptionsSet(DialogueOptions* dopt, String* str, i32 strCount) {
+    dopt->index = 0;
+    dopt->options = str;
+    dopt->count = strCount;
+}
 void DialogueOptionsUpdate(void* _dopt) {
     DialogueOptions* dopt = (DialogueOptions*)_dopt;
+    if (!dopt->visible) {
+        return;
+    }
     i32 move = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
     dopt->index = iwrapi(dopt->index + move, 0, dopt->count);
     if (global::input.pressed[INPUT_SELECT]) {
@@ -1153,7 +1173,13 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt) {
 }
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
+    dseq->sectionIndex = 0;
     ListInit(&dseq->sections, 50);
+    TypewriterInit(&dseq->typewriter);
+    dseq->typewriter.autoAdvance = true;
+    dseq->typewriter.autoHide = false;
+    DialogueOptionsInit(&dseq->options);
+
     switch (ind) {
         case 0:
         {
@@ -1188,15 +1214,17 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
         }
     }
 
-    DialogueSequenceSection* dss = (DialogueSequenceSection*)ListGet(&dseq->sections, 0);
-    TypewriterInit(&dseq->typewriter, dss->text->data, dss->text->size);
-    dseq->typewriter.autoAdvance = true;
-    dseq->typewriter.autoHide = false;
-    DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
-    dseq->options.visible = false;
-
+    DialogueSequenceSectionStart(dseq, 0);
     EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueSequenceHandleTypewriter_TextAdvance);
     EventHandlerRegisterEvent(EVENT_DIALOGUE_OPTIONS_SELECTED, dseq, (EventCallbackSignature)DialogueSequenceHandleOptions_Selected);
+}
+void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind) {
+    DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, ind);
+    TypewriterStart(&dseq->typewriter, dss->text->data, dss->text->size);
+    DialogueOptionsSet(&dseq->options, dss->options->data, dss->options->size);
+    if (dss->options->size == 0) {
+        dseq->typewriter.autoHide = true;
+    }
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1210,6 +1238,9 @@ void DialogueSequenceDraw(void* _dseq) {
 }
 void DialogueSequenceFree(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
+}
+DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind) {
+    return (DialogueSequenceSection*)ListGet(&dseq->sections, ind);
 }
 DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount) {
     DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>();
@@ -1227,13 +1258,24 @@ GameObject DialogueSequencePack(DialogueSequence* _dseq) {
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
-    if (args->lineCurrent == args->lineCount - 1) {
+    DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, dseq->sectionIndex);
+    if (args->lineCurrent == args->lineCount - 1 && dss->options->size > 0) {
         dseq->options.visible = true;
     }
 }
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
-    printf(TextFormat("yeah it worked %i, %i", args->count, args->index));
+    DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, dseq->sectionIndex);
+    i32 nextSectionIndex = (i32)ListGet(dss->link, args->index);
+    if (nextSectionIndex == -1) {
+        dseq->options.visible = false;
+        dseq->typewriter.visible = false;
+    } else {
+        dseq->options.visible = false;
+        dseq->sectionIndex = nextSectionIndex;
+        DialogueSequenceSectionStart(dseq, dseq->sectionIndex);
+    }
+    printf(TextFormat("yeah it worked %i\n", nextSectionIndex));
 }
 
 void InputInit(Input* input) {
