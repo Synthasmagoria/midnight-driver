@@ -159,7 +159,6 @@ struct Typewriter {
     i32 y;
     float speed;
     float progress;
-    TextDrawingStyle* textStyle;
 };
 void TypewriterInit(Typewriter* tw, String* string, i32 stringCount);
 void TypewriterUpdate(void* tw);
@@ -283,13 +282,8 @@ struct InstanceMeshRenderDataBlocks {
 };
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
-void ForestDraw(void* _imrd) {
-    InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
-    DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
-}
-GameObject ForestPack(InstanceMeshRenderData* forest) {
-    return GameObjectCreate((void*)forest, nullptr, nullptr, nullptr, ForestDraw);
-}
+void ForestDraw(void* _imrd);
+GameObject ForestPack(InstanceMeshRenderData* forest);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // https://www.desmos.com/calculator/scz7zhonfw
@@ -531,7 +525,6 @@ i32 PixelformatGetStride(i32 format) {
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
 #define LOAD_FONT(path)(LoadFont(TextFormat("resources/fonts/%s", path)))
-#define LOAD_FONT_TTF(path)(LoadFontEx(TextFormat("resources/fonts/%s", path), 16, 0, 250))
 #define MatrixRotateRoll(rad) MatrixRotateX(rad)
 #define MatrixRotateYaw(rad) MatrixRotateY(rad)
 #define MatrixRotatePitch(rad) MatrixRotateZ(rad)
@@ -617,6 +610,10 @@ namespace global {
         "silver.ttf",
         "mecha.png"
     };
+    const u32 fontSizes[FONT_COUNT] = {
+        32,
+        32
+    };
     Font fonts[FONT_COUNT];
 
     Input input;
@@ -660,7 +657,7 @@ void UnloadGameShaders() {
 void LoadGameMaterials() {
     Shader sh;
     Material mat;
-    
+
     sh = LOAD_SHADER("lightInstanced.vs", "light.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
     mat = LoadMaterialDefault();
@@ -745,11 +742,7 @@ void UnloadGameImages() {
 
 void LoadGameFonts() {
     for (i32 i = 0; i < global::FONT_COUNT; i++) {
-        if (strstr(global::fontPaths[i], ".png")) {
-            global::fonts[i] = LOAD_FONT(global::fontPaths[i]);
-        } else if (strstr(global::fontPaths[i], ".ttf")) {
-            global::fonts[i] = LOAD_FONT_TTF(global::fontPaths[i]);
-        }
+        global::fonts[i] = LoadFontEx(TextFormat("resources/fonts/%s",global::fontPaths[i]), global::fontSizes[i], NULL, 0);
     }
 }
 void UnloadGameFonts() {
@@ -798,14 +791,14 @@ i32 main() {
     SetTargetFPS(FRAMERATE);
     DisableCursor();
 
-    InitGlobals();
     LoadGameResources();
+    InitGlobals();
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
     // i32 gameObjectCount = SceneSetup01(gameObject);
     // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
-    i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
+    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -815,7 +808,7 @@ i32 main() {
         }
 
         GameObjectsUpdate(gameObject, gameObjectCount);
-        
+
         if (global::currentCamera != nullptr) {
             UpdateGameMaterials(global::currentCamera->position);
         } else {
@@ -845,7 +838,7 @@ i32 main() {
     MemoryPoolDestroy(&global::persistentMemoryPool);
     UnloadGameResources();
 
-    return(0);
+    return 0;
 }
 
 void InitGlobals() {
@@ -856,20 +849,25 @@ void InitGlobals() {
 
     TextDrawingStyle textDrawingStyle = {};
     textDrawingStyle.charSpacing = 1;
-    textDrawingStyle.font = GetFontDefault();
-    textDrawingStyle.size = 24.f;
+    textDrawingStyle.font = global::fonts[global::FONT_GAME];
+    textDrawingStyle.size = global::fontSizes[global::FONT_GAME];
     textDrawingStyle.color = WHITE;
     global::textDrawingStyle = textDrawingStyle;
-    global::debugDrawingStyle = textDrawingStyle;
+
+    TextDrawingStyle debugDrawingStyle = {};
+    debugDrawingStyle.charSpacing = 1;
+    debugDrawingStyle.font = global::fonts[global::FONT_DEBUG];
+    debugDrawingStyle.size = global::fontSizes[global::FONT_DEBUG];
+    debugDrawingStyle.color = WHITE;
+    global::debugDrawingStyle = debugDrawingStyle;
 }
 
 void DrawDebug3d() {
     DrawGrid(20, 1.f);
 }
-
 void DrawDebugUi() {
     DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
-    TextDrawingStyle style = global::textDrawingStyle;
+    TextDrawingStyle style = global::debugDrawingStyle;
     v2 drawPos = {4.f, 4.f};
     DrawTextEx(style.font, "Memory usage:", drawPos, style.size, style.charSpacing, WHITE);
     drawPos.y += style.size;
@@ -885,7 +883,6 @@ void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
         }
     }
 }
-
 void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].Draw3d != nullptr) {
@@ -893,7 +890,6 @@ void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
         }
     }
 }
-
 void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].DrawUi != nullptr) {
@@ -901,7 +897,6 @@ void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
         }
     }
 }
-
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].Free != nullptr) {
@@ -999,14 +994,13 @@ void TypewriterInit(Typewriter* tw, String* string, i32 stringCount) {
     tw->_autoAdvanceCountdown = -1.f;
     tw->x = screenWidth / 2;
     tw->y = screenHeight / 2 - screenHeight / 4 - screenHeight / 8;
-    tw->textStyle = &global::textDrawingStyle;
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
     if (tw->text == nullptr) {
         return;
     }
-    
+
     float length = (float)tw->text[tw->textIndex].length;
     float textProgressPrevious = tw->progress;
     tw->progress = fminf(tw->progress + tw->speed * FRAME_TIME, length);
@@ -1051,10 +1045,10 @@ void TypewriterDraw(void* _tw) {
     if (!tw->visible || tw->text == nullptr) {
         return;
     }
-    TextDrawingStyle* textStyle = tw->textStyle;
+    TextDrawingStyle* style = &global::textDrawingStyle;
     String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
-    v2 textAlign = MeasureTextEx(textStyle->font, substr.cstr, textStyle->size, textStyle->charSpacing) / 2.f;
-    DrawTextPro(textStyle->font, substr.cstr, {(float)tw->x, (float)tw->y}, textAlign, 0.f, 18.f, 1.f, WHITE);
+    v2 textAlign = MeasureTextEx(style->font, substr.cstr, style->size, style->charSpacing) / 2.f;
+    DrawTextPro(style->font, substr.cstr, {truncf((float)tw->x), truncf((float)tw->y)}, textAlign, 0.f, style->size, 1.f, WHITE);
     StringDestroy(substr);
 }
 GameObject TypewriterPack(Typewriter* tw) {
@@ -1093,7 +1087,7 @@ void DialogueOptionsDraw(void* _dopt) {
     if (!dopt->visible) {
         return;
     }
-    
+
     String* options = dopt->options;
     TextDrawingStyle* textStyle = dopt->textStyle;
     v2* textSize = (v2*)malloc(dopt->number * sizeof(v2));
@@ -1314,7 +1308,7 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
         if (x + 1.f == imageSize.x || y + 1.f == imageSize.y) {
             continue;
         }
-        
+
         // TODO: SIMD
         i32 dataIndex = i * pixelStride;
         byte* pixelData = &imageData[dataIndex];
@@ -1349,8 +1343,13 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
     imrd.transforms = transformsV;
     return imrd;
 }
-void ForestDraw(void* _imrd);
-GameObject ForestPack(InstanceMeshRenderData* forest);
+void ForestDraw(void* _imrd) {
+    InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
+    DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
+}
+GameObject ForestPack(InstanceMeshRenderData* forest) {
+    return GameObjectCreate((void*)forest, nullptr, nullptr, nullptr, ForestDraw);
+}
 
 void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material) {
     psys->_material = material;
@@ -1509,7 +1508,7 @@ void CabUpdate(void* _cab) {
     cab->velocity = cab->direction * stepSpeed;
     cab->position += cab->velocity;
     cab->position.y = HeightmapSampleHeight(
-        *(Heightmap*)global::groups["terrainHeightmap"],
+        *((Heightmap*)global::groups["terrainHeightmap"]),
         cab->position.x,
         cab->position.z);
 }
@@ -1618,7 +1617,7 @@ void CameraUpdate(Camera* camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
     v2 eulerDiff = eulerNext - euler;
     mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y);
     v3 rotatedTarget = target * rot;
-    
+
     camera->position = position;
     camera->target = camera->position + target * rot;
 }
@@ -2137,6 +2136,17 @@ i32 SceneSetup01(GameObject* goOut) {
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
+    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    mi->model = LOAD_MODEL("level.glb");
+    BoundingBox bb = GenBoundingBoxMesh(mi->model.meshes[0]);
+    mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
+    mi->model.materials[1] = global::materials[global::MATERIAL_LIT];
+    mi->position = {0.f, 0.f, 0.f};
+    mi->scale = 1.f;
+    mi->tint = WHITE;
+    goOut[goCount] = ModelInstancePack(mi);
+    goCount++;
+
     HeightmapGenerationInfo hgi = {};
     hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
     hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
@@ -2146,30 +2156,25 @@ i32 SceneSetup01(GameObject* goOut) {
     hgi.resdiv = 2;
     Heightmap* hm = MemoryReserve<Heightmap>();
     HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
-    global::groups["terrainHeightmap"] = (void*)&hm;
+    global::groups["terrainHeightmap"] = hm;
     goOut[goCount] = HeightmapPack(hm); goCount++;
 
-    Skybox* skybox = MemoryReserve<Skybox>();
-    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    skybox->shader = global::shaders[global::SHADER_SKYBOX];
-    {
-        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-        i32 gammaValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-        i32 vflippedValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-    }
-    skybox->model.materials[0].shader = skybox->shader;
-    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        global::images[global::IMAGE_SKYBOX],
-        CUBEMAP_LAYOUT_AUTO_DETECT);
-    goOut[goCount] = SkyboxPack(skybox); goCount++;
-
-    ParticleSystem* psys = MemoryReserve<ParticleSystem>();
-    ParticleSystemInit(psys, global::textures[global::TEXTURE_STAR], global::materials[global::MATERIAL_UNLIT]);
-    psys->velocity = {1.f, 0.f, 0.f};
-    goOut[goCount] = ParticleSystemPack(psys); goCount++;
+    // Skybox* skybox = MemoryReserve<Skybox>();
+    // skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    // skybox->shader = global::shaders[global::SHADER_SKYBOX];
+    // {
+    //     i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+    //     i32 gammaValue = 0;
+    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+    //     i32 vflippedValue = 0;
+    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    // }
+    // skybox->model.materials[0].shader = skybox->shader;
+    // skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+    //     global::images[global::IMAGE_SKYBOX],
+    //     CUBEMAP_LAYOUT_AUTO_DETECT);
+    // goOut[goCount] = SkyboxPack(skybox); goCount++;
 
     Cab* cab = MemoryReserve<Cab>();
     CabInit(cab);
@@ -2179,7 +2184,7 @@ i32 SceneSetup01(GameObject* goOut) {
 };
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
-    
+
     DialogueSequence* dseq = MemoryReserve<DialogueSequence>();
     DialogueSequenceInit(dseq, 0);
     go[goCount] = DialogueSequencePack(dseq);
@@ -2196,7 +2201,8 @@ i32 SceneSetup_ModelTest(GameObject* go) {
     goCount++;
 
     ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = LOAD_MODEL("tree.glb");
+    mi->model = LOAD_MODEL("level.glb");
+    mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
     mi->tint = WHITE;
     mi->position = {0.f};
     mi->scale = 1.f;
