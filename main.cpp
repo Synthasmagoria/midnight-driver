@@ -89,6 +89,7 @@ GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
 enum EVENT_HANDLER_EVENTS {
     EVENT_TYPEWRITER_LINE_COMPLETE,
+    EVENT_DIALOGUE_OPTIONS_SELECTED,
     EVENT_COUNT
 };
 struct EventArgs_TypewriterLineComplete {
@@ -96,6 +97,11 @@ struct EventArgs_TypewriterLineComplete {
     i32 lineCount;
 };
 typedef void(*EventCallbackSignature_TypewriterLineComplete)(void*, EventArgs_TypewriterLineComplete*);
+struct EventArgs_DialogueOptionsSelected {
+    i32 index;
+    i32 count;
+};
+typedef void(*EventCallbackSignature_DialogueOptionsSelected)(void*, EventArgs_DialogueOptionsSelected*);
 struct EventHandler {
     List* callbacks[EVENT_COUNT];
     List* registrars[EVENT_COUNT];
@@ -173,7 +179,7 @@ void _TypewriterReset(Typewriter *tw);
 struct DialogueOptions {
     String* options;
     i32 index;
-    i32 number;
+    i32 count;
     i32 x;
     i32 y;
     bool visible;
@@ -200,7 +206,8 @@ void DialogueSequenceDraw(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
+void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
+void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
 struct DialogueSequenceSection {
 
     StringList* text;
@@ -232,6 +239,7 @@ enum INPUT {
     INPUT_DEBUG_DOWN,
     INPUT_COUNT
 };
+#define INPUT_SELECT INPUT_ACCELERATE
 
 struct Input {
     u32 map[INPUT_COUNT];
@@ -1064,7 +1072,7 @@ void TypewriterEvent_LineComplete(Typewriter* tw) {
 void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
     dopt->index = 0;
     dopt->options = str;
-    dopt->number = num;
+    dopt->count = num;
     dopt->visible = 1;
     dopt->x = screenWidth / 2;
     dopt->y = screenHeight / 2 + screenHeight / 4;
@@ -1074,13 +1082,16 @@ void DialogueOptionsInit(DialogueOptions* dopt, String* str, i32 num) {
     dopt->optionBoxHeightAdd = 32.f;
     dopt->optionSeparationAdd = 48.f;
 }
-void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions) {
-    i32 input = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
-    dialogueOptions->index = iwrapi(dialogueOptions->index + input, 0, dialogueOptions->number);
-}
 void DialogueOptionsUpdate(void* _dopt) {
     DialogueOptions* dopt = (DialogueOptions*)_dopt;
-    DialogueOptionsHandleInput(dopt);
+    i32 move = global::input.pressed[INPUT_DOWN] - global::input.pressed[INPUT_UP];
+    dopt->index = iwrapi(dopt->index + move, 0, dopt->count);
+    if (global::input.pressed[INPUT_SELECT]) {
+        EventArgs_DialogueOptionsSelected args;
+        args.count = dopt->count;
+        args.index = dopt->index;
+        EventHandlerCallEvent(dopt, EVENT_DIALOGUE_OPTIONS_SELECTED, &args);
+    }
 }
 void DialogueOptionsDraw(void* _dopt) {
     DialogueOptions* dopt = (DialogueOptions*)_dopt;
@@ -1090,16 +1101,16 @@ void DialogueOptionsDraw(void* _dopt) {
 
     String* options = dopt->options;
     TextDrawingStyle* textStyle = dopt->textStyle;
-    v2* textSize = (v2*)malloc(dopt->number * sizeof(v2));
+    v2* textSize = (v2*)malloc(dopt->count * sizeof(v2));
     v2 boxSize = {0.f, 0.f};
     // TODO: These measurements can be done as preprocessing. No need for the memory allocation every fucking frame
-    for (i32 i = 0; i < dopt->number; i++) {
+    for (i32 i = 0; i < dopt->count; i++) {
         String option = dopt->options[i];
         textSize[i] = MeasureTextEx(textStyle->font, option.cstr, textStyle->size, textStyle->charSpacing);
         boxSize = v2maxv2(boxSize, textSize[i]);
     }
     boxSize.x += 64.f;
-    for (i32 i = 0; i < dopt->number; i++) {
+    for (i32 i = 0; i < dopt->count; i++) {
         Color textTint = GRAY;
         Color boxTint = GRAY;
         if (i == dopt->index) {
@@ -1184,7 +1195,8 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     DialogueOptionsInit(&dseq->options, dss->options->data, dss->options->size);
     dseq->options.visible = false;
 
-    EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueHandleTypewriter_TextAdvance);
+    EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueSequenceHandleTypewriter_TextAdvance);
+    EventHandlerRegisterEvent(EVENT_DIALOGUE_OPTIONS_SELECTED, dseq, (EventCallbackSignature)DialogueSequenceHandleOptions_Selected);
 }
 void DialogueSequenceUpdate(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1212,12 +1224,16 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
 GameObject DialogueSequencePack(DialogueSequence* _dseq) {
     return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
 }
-void DialogueHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
+void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
     if (args->lineCurrent == args->lineCount - 1) {
         dseq->options.visible = true;
     }
+}
+void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* args) {
+    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+    printf(TextFormat("yeah it worked %i, %i", args->count, args->index));
 }
 
 void InputInit(Input* input) {
@@ -1688,10 +1704,14 @@ void EventHandlerCallEvent(void* caller, u32 ind, void* _args) {
     for (u32 i = 0; i < registrars->size; i++) {
         EventCallbackSignature callback = (EventCallbackSignature)ListGet(callbacks, i);
         switch(ind) {
-            case EVENT_TYPEWRITER_LINE_COMPLETE:
-            {
+            case EVENT_TYPEWRITER_LINE_COMPLETE: {
                 EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
                 EventCallbackSignature_TypewriterLineComplete callback = (EventCallbackSignature_TypewriterLineComplete)ListGet(callbacks, i);
+                callback(ListGet(registrars, i), args);
+            }
+            case EVENT_DIALOGUE_OPTIONS_SELECTED: {
+                EventArgs_DialogueOptionsSelected* args = (EventArgs_DialogueOptionsSelected*)_args;
+                EventCallbackSignature_DialogueOptionsSelected callback = (EventCallbackSignature_DialogueOptionsSelected)ListGet(callbacks, i);
                 callback(ListGet(registrars, i), args);
             }
         }
