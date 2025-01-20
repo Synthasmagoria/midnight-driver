@@ -463,12 +463,11 @@ inline i32 iwrapi(i32 val, i32 min, i32 max) {
 inline float ffractf(float val) {return val - floorf(val);}
 inline float fclampf(float val, float min, float max) {return fminf(fmaxf(val, min), max);}
 inline float fsignf(float val) {return (float)(!signbit(val)) * 2.f - 1.f;}
-inline v2 v2fractv2(v2 v) {return {ffractf(v.x), ffractf(v.y)};}
-inline v2 v2clampv2(v2 val, v2 min, v2 max) {return {fclampf(val.x, min.x, max.x), fclampf(val.y, min.y, max.y)};}
-inline v2 v2maxv2(v2 a, v2 b) {return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};}
-inline v2 v2minv2(v2 a, v2 b) {return {fmaxf(a.x, b.x), fmaxf(a.y, b.y)};}
+inline v2 Vector2Fract(v2 v) {return {ffractf(v.x), ffractf(v.y)};}
+inline v2 Vector2FromAngle(float ang) {return {cos(ang), -sin(ang)};}
 inline float ApproachZero(float val, float amount) {return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);}
 // NOTE: only supports up to 3 decimals
+
 inline float GetRandomValueF(float min, float max) {
     return ((float)GetRandomValue((i32)(min * 1000.f), (i32)(max * 1000.f))) / 1000.f;
 }
@@ -1171,7 +1170,7 @@ void DialogueOptionsDraw(void* _dopt) {
     for (i32 i = 0; i < dopt->count; i++) {
         String option = dopt->options[i];
         textSize[i] = MeasureTextEx(textStyle->font, option.cstr, textStyle->size, textStyle->charSpacing);
-        boxSize = v2maxv2(boxSize, textSize[i]);
+        boxSize = Vector2Max(boxSize, textSize[i]);
     }
     boxSize.x += 64.f;
     for (i32 i = 0; i < dopt->count; i++) {
@@ -1698,8 +1697,12 @@ GameObject CameraManagerPack(CameraManager* camMan) {
 }
 void CameraUpdateCab(Camera* camera, Cab* cab) {
     v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
+    float turnAngleNorm = cab->_turnAngle / cab->turnAngleMax;
+    float cabAngle = atan2f(cab->direction.x, cab->direction.z);
+    v2 directionTilted = Vector2FromAngle(cabAngle + turnAngleNorm * DEG2RAD * 20.f - PI / 2.f);
+    v3 direction = {directionTilted.x, 0.f, directionTilted.y};
     camera->position = frontSeatPosition;
-    camera->target = frontSeatPosition + cab->direction;
+    camera->target = frontSeatPosition + direction;
 }
 void CameraUpdateDebug(Camera* camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
@@ -1997,7 +2000,7 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
         v2 abspos = v2{x, z} - rectBegin;
         v2 normpos = abspos / v2{heightmap.size.x, heightmap.size.z};
         v2 datapos = normpos * v2{(float)heightmap.heightDataWidth, (float)heightmap.heightDataHeight};
-        v2 dataposFract = v2fractv2(datapos);
+        v2 dataposFract = Vector2Fract(datapos);
         u32 dataX = datapos.x;
         u32 dataY = datapos.y;
         bool nextX = dataX + 1 < heightmap.heightDataWidth;
