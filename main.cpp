@@ -416,7 +416,7 @@ void CameraManagerDrawUi(void* _camMan);
 GameObject CameraManagerPack(CameraManager* camMan);
 
 void CameraUpdateDebug(Camera* camera, float speed);
-void CameraUpdate(Camera* camera, v3 position, v2 rotationAdd, v3 viewMiddle);
+void CameraUpdateCab(Camera* camera, Cab* cab);
 v3 GetCameraForwardNorm(Camera* camera);
 v3 GetCameraUpNorm(Camera* camera);
 v3 GetCameraRightNorm(Camera* camera);
@@ -459,6 +459,14 @@ inline float GetRandomValueF(float min, float max) {
     return ((float)GetRandomValue((i32)(min * 1000.f), (i32)(max * 1000.f))) / 1000.f;
 }
 inline bool GetRandomChanceF(float percentage) {return GetRandomValueF(0.f, 100.f) < percentage;}
+float GetClosestWrappedF(float from, float to, float bounds_min, float bounds_max) {
+    float dist = bounds_max - bounds_min;
+    float a = to - from;
+    float b = (to + dist) - from;
+    float c = (to - dist) - from;
+    float result = fabs(a) < fabs(b) ? a : b;
+    return fabs(c) < fabs(result) ? c + from : result + from;
+}
 
 u32 Fnv32Buf(void* buf, u64 len, u32 hval) {
     byte *bp = (byte*)buf;
@@ -634,20 +642,6 @@ namespace global {
 
     unordered_map<string, void*> groups = unordered_map<string, void*>();
 
-    const i32 dialogueCount = 3;
-    String dialogue[dialogueCount] = {
-       StringCreate("This is a string instance"),
-       StringCreate("Second sentence hits harder than the first for some reason"),
-       StringCreate("Holy fuck there's a third")
-    };
-
-    const i32 dialogueOptionsCount = 3;
-    String dialogueOptions[dialogueOptionsCount] = {
-        StringCreate("Hello!"),
-        StringCreate("What can I do for you?"),
-        StringCreate("Want a cigarette?")
-    };
-
     Camera* currentCamera = nullptr;
     TextDrawingStyle textDrawingStyle = {};
     TextDrawingStyle debugDrawingStyle = {};
@@ -810,9 +804,9 @@ i32 main() {
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    // i32 gameObjectCount = SceneSetup01(gameObject);
+    i32 gameObjectCount = SceneSetup01(gameObject);
     // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
-    i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
+    // i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -1624,7 +1618,7 @@ void CameraManagerUpdate(void* _camMan) {
     } else {
         Cab* cab = (Cab*)global::groups["cab"];
         if (cab != nullptr) {
-            CameraUpdate(&camMan->playerCamera, CabGetFrontSeatPosition(cab), {cab->yawRotationStep, 0.f}, cab->direction);
+            CameraUpdateCab(&camMan->playerCamera, cab);
             global::currentCamera = &camMan->playerCamera;
         }
     }
@@ -1632,7 +1626,7 @@ void CameraManagerUpdate(void* _camMan) {
 void CameraManagerDrawUi(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
     if (camMan->cameraMode == 1) {
-        DrawTextShadow("Debug cam", 4, 20, 16, RED, BLACK);
+        DrawTextShadow("Debug cam", 4, screenHeight - 20, 16, RED, BLACK);
     }
     DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
 }
@@ -1645,7 +1639,11 @@ void CameraManagerFree(void* _camMan) {
 GameObject CameraManagerPack(CameraManager* camMan) {
     return GameObjectCreate(camMan, CameraManagerUpdate, nullptr, CameraManagerDrawUi, CameraManagerFree);
 }
-
+void CameraUpdateCab(Camera* camera, Cab* cab) {
+    v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
+    camera->position = frontSeatPosition;
+    camera->target = frontSeatPosition + cab->direction;
+}
 void CameraUpdateDebug(Camera* camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
     float sensitivity = 0.002f;
@@ -1663,22 +1661,11 @@ void CameraUpdateDebug(Camera* camera, float speed) {
         camera->position.x += hDirection.x * speed;
         camera->position.z += hDirection.y * speed;
     }
+    
     camera->position.y += input.y * speed;
     camera->target = camera->position + targetDirection;
 }
-void CameraUpdate(Camera* camera, v3 position, v2 rotationAdd, v3 viewMiddle) {
-    v3 target = Vector3Normalize(camera->target - camera->position);
-    v2 euler = {atan2f(target.x, target.z), atan2f(target.y, target.x)};
-    v2 mouseRotationStep = GetMouseDelta() * FRAME_TIME * -0.05f;
-    v2 eulerNext = euler + mouseRotationStep + rotationAdd;
-    //v2 eulerNext = v2clampv2(euler + mouseRotationStep + rotationAdd, v2{0.1f, PI / -2.f + 0.3f}, v2{PI - 0.1f, PI / 2.f - 0.3f});
-    v2 eulerDiff = eulerNext - euler;
-    mat4 rot = MatrixRotateYaw(eulerDiff.x) * MatrixRotatePitch(eulerDiff.y);
-    v3 rotatedTarget = target * rot;
 
-    camera->position = position;
-    camera->target = camera->position + target * rot;
-}
 v3 GetCameraForwardNorm(Camera* camera) {
     return Vector3Normalize(camera->target - camera->position);
 }
@@ -1690,6 +1677,7 @@ v3 GetCameraRightNorm(Camera* camera) {
     v3 up = GetCameraUpNorm(camera);
     return Vector3Normalize(Vector3CrossProduct(forward, up));
 }
+
 Camera CameraGetDefault() {
     Camera camera = {};
     camera.fovy = 60.f;
@@ -2190,24 +2178,26 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
 i32 SceneSetup01(GameObject* goOut) {
     i32 goCount = 0;
 
-    CameraManager* camMan = MemoryReserve<CameraManager>();
-    CameraManagerInit(camMan, CameraGetDefault());
-    goOut[goCount] = CameraManagerPack(camMan); goCount++;
+    Skybox* skybox = MemoryReserve<Skybox>();
+    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    skybox->shader = global::shaders[global::SHADER_SKYBOX];
+    {
+        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        i32 gammaValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        i32 vflippedValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    }
+    skybox->model.materials[0].shader = skybox->shader;
+    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        global::images[global::IMAGE_SKYBOX],
+        CUBEMAP_LAYOUT_AUTO_DETECT);
+    goOut[goCount] = SkyboxPack(skybox); goCount++;
 
     v3 terrainSize = {1000.f, 100.f, 1000.f};
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
-
-    ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = LOAD_MODEL("level.glb");
-    BoundingBox bb = GenBoundingBoxMesh(mi->model.meshes[0]);
-    mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
-    mi->model.materials[1] = global::materials[global::MATERIAL_LIT];
-    mi->position = {0.f, 0.f, 0.f};
-    mi->scale = 1.f;
-    mi->tint = WHITE;
-    goOut[goCount] = ModelInstancePack(mi);
-    goCount++;
 
     HeightmapGenerationInfo hgi = {};
     hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
@@ -2221,26 +2211,21 @@ i32 SceneSetup01(GameObject* goOut) {
     global::groups["terrainHeightmap"] = hm;
     goOut[goCount] = HeightmapPack(hm); goCount++;
 
-    // Skybox* skybox = MemoryReserve<Skybox>();
-    // skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    // skybox->shader = global::shaders[global::SHADER_SKYBOX];
-    // {
-    //     i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-    //     i32 gammaValue = 0;
-    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-    //     i32 vflippedValue = 0;
-    //     SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-    // }
-    // skybox->model.materials[0].shader = skybox->shader;
-    // skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-    //     global::images[global::IMAGE_SKYBOX],
-    //     CUBEMAP_LAYOUT_AUTO_DETECT);
-    // goOut[goCount] = SkyboxPack(skybox); goCount++;
+    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    mi->model = global::models[global::MODEL_TREE];
+    BoundingBox miBb = GenBoundingBoxMeshes(mi->model.meshes, mi->model.meshCount);
+    mi->position = miBb.min + (miBb.max - miBb.min) / 2.f;
+    mi->scale = 1.f;
+    mi->tint = WHITE;
+    goOut[goCount] = ModelInstancePack(mi); goCount++;
 
     Cab* cab = MemoryReserve<Cab>();
     CabInit(cab);
     goOut[goCount] = CabPack(cab); goCount++;
+
+    CameraManager* camMan = MemoryReserve<CameraManager>();
+    CameraManagerInit(camMan, CameraGetDefault());
+    goOut[goCount] = CameraManagerPack(camMan); goCount++;
 
     return goCount;
 };
@@ -2263,8 +2248,8 @@ i32 SceneSetup_ModelTest(GameObject* go) {
     goCount++;
 
     ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = LOAD_MODEL("level.glb");
-    mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
+    mi->model = LOAD_MODEL("level_prototypeB.glb");
+    //mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
     mi->tint = WHITE;
     mi->position = {0.f};
     mi->scale = 1.f;
