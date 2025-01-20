@@ -232,17 +232,18 @@ struct TextDrawingStyle {
 enum INPUT {
     INPUT_ACCELERATE,
     INPUT_BREAK,
-    INPUT_TOGGLE_DEBUG,
     INPUT_LEFT,
     INPUT_RIGHT,
     INPUT_DOWN,
     INPUT_UP,
+    INPUT_DEBUG_TOGGLE,
     INPUT_DEBUG_LEFT,
     INPUT_DEBUG_RIGHT,
     INPUT_DEBUG_FORWARD,
     INPUT_DEBUG_BACKWARD,
     INPUT_DEBUG_UP,
     INPUT_DEBUG_DOWN,
+    INPUT_DEBUG_CONTROL,
     INPUT_COUNT
 };
 #define INPUT_SELECT INPUT_ACCELERATE
@@ -255,6 +256,8 @@ struct Input {
 };
 void InputInit(Input* input);
 void InputUpdate(Input* input);
+bool InputCheckPressedCombination(i32 a, i32 b);
+bool InputCheckPressedExclusive(i32 ind, i32 exclude);
 
 // TODO: Removed deprecated
 struct ForestGenerationInfo {
@@ -342,7 +345,7 @@ struct BillboardParticleSystem {
 };
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera);
 
-struct HeightmapGenerationInfo {
+struct HeightmapGenerationInfoBackup {
     Image *heightmapImage;
     Texture *terrainMapTexture;
     Texture *terrainTexture;
@@ -350,8 +353,13 @@ struct HeightmapGenerationInfo {
     v3 size;
     u32 resdiv;
 };
-
-struct Heightmap {
+struct HeightmapGenerationInfo {
+    Image *heightmapImage;
+    v3 position;
+    v3 size;
+    u32 resdiv;
+};
+struct HeightmapBackup {
     Model model;
     Image heightmap;
     Texture2D texture;
@@ -364,11 +372,17 @@ struct Heightmap {
     Model debugModel;
     u32 width;
 };
-void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material);
+struct Heightmap {
+    v3 position;
+    v3 size;
+    u32 heightDataWidth;
+    u32 heightDataHeight;
+    float *heightData;
+    u32 width;
+};
+void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info);
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
-void HeightmapDraw(void* hm);
-void HeightmapFree(void* hm);
-GameObject HeightmapPack(Heightmap* hm);
+void HeightmapFree(Heightmap* hm);
 
 struct Cab {
     Model model;
@@ -581,11 +595,13 @@ namespace global {
     enum GAME_MODELS {
         MODEL_CAB,
         MODEL_TREE,
+        MODEL_LEVEL,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "cab.glb",
-        "tree.glb"
+        "tree.glb",
+        "level_prototypeB.glb"
     };
     Model models[MODEL_COUNT];
 
@@ -634,7 +650,7 @@ namespace global {
     };
     const u32 fontSizes[FONT_COUNT] = {
         32,
-        32
+        28
     };
     Font fonts[FONT_COUNT];
 
@@ -648,7 +664,9 @@ namespace global {
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
     EventHandler eventHandler;
-    bool debugEnabled = false;
+
+    bool debugCameraEnabled = false;
+    bool debugOverlayEnabled = false;
 }
 
 void LoadGameShaders() {
@@ -750,7 +768,11 @@ void UnloadGameImages() {
 
 void LoadGameFonts() {
     for (i32 i = 0; i < global::FONT_COUNT; i++) {
-        global::fonts[i] = LoadFontEx(TextFormat("resources/fonts/%s",global::fontPaths[i]), global::fontSizes[i], NULL, 0);
+        if (strstr(global::fontPaths[i], ".ttf") != nullptr) {
+            global::fonts[i] = LoadFontEx(TextFormat("resources/fonts/%s",global::fontPaths[i]), global::fontSizes[i], NULL, 0);
+        } else {
+            global::fonts[i] = LOAD_FONT(global::fontPaths[i]);
+        }
     }
 }
 void UnloadGameFonts() {
@@ -811,8 +833,10 @@ i32 main() {
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
 
-        if (global::input.pressed[INPUT_TOGGLE_DEBUG]) {
-            global::debugEnabled = !global::debugEnabled;
+        if (InputCheckPressedCombination(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
+            global::debugCameraEnabled = !global::debugCameraEnabled;
+        } else if (InputCheckPressedExclusive(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
+            global::debugOverlayEnabled = !global::debugOverlayEnabled;
         }
 
         GameObjectsUpdate(gameObject, gameObjectCount);
@@ -828,13 +852,13 @@ i32 main() {
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
                 GameObjectsDraw3d(gameObject, gameObjectCount);
-                if (global::debugEnabled) {
+                if (global::debugOverlayEnabled) {
                     DrawDebug3d();
                 }
             EndMode3D();
         }
         GameObjectsDrawUi(gameObject, gameObjectCount);
-        if (global::debugEnabled) {
+        if (global::debugOverlayEnabled) {
             DrawDebugUi();
         }
         EndDrawing();
@@ -853,7 +877,6 @@ void InitGlobals() {
     global::localMemoryPool = MemoryPoolCreate(1 << 16);
     global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
     global::eventHandler = EventHandlerCreate();
-    global::debugEnabled = false;
 
     TextDrawingStyle textDrawingStyle = {};
     textDrawingStyle.charSpacing = 1;
@@ -876,12 +899,39 @@ void DrawDebug3d() {
 void DrawDebugUi() {
     DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
     TextDrawingStyle style = global::debugDrawingStyle;
-    v2 drawPos = {4.f, 4.f};
-    DrawTextEx(style.font, "Memory usage:", drawPos, style.size, style.charSpacing, WHITE);
-    drawPos.y += style.size;
-    DrawTextEx(style.font, TextFormat("Local: %i / %i", global::localMemoryPool.location, global::localMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
-    drawPos.y += style.size;
-    DrawTextEx(style.font, TextFormat("Global: %i / %i", global::persistentMemoryPool.location, global::persistentMemoryPool.size), drawPos, style.size, style.charSpacing, WHITE);
+    const char* debugInfoHeaders[] = {
+        "Memory usage:",
+        "Local: %i / %i",
+        "Global: %i / %i",
+        "Player position: %f, %f, %f"
+    };
+    constexpr i32 textNum = sizeof(debugInfoHeaders) / 8;
+    const char* formattedDebugInfo[textNum] = {
+        debugInfoHeaders[0],
+        TextFormat(debugInfoHeaders[1], global::localMemoryPool.location, global::localMemoryPool.size),
+        TextFormat(debugInfoHeaders[2], global::persistentMemoryPool.location, global::persistentMemoryPool.size),
+        ""
+    };
+    Cab* cab = (Cab*)global::groups["cab"];
+    if (cab != nullptr) {
+        formattedDebugInfo[3] = TextFormat(debugInfoHeaders[3], cab->position.x, cab->position.y, cab->position.z);
+    } else {
+        formattedDebugInfo[3] = "Player position: null";
+    }
+    v2 debugInfoMeasurements[textNum];
+    float debugTextMaxWidth = 0.f;
+    for (i32 i = 0; i < textNum; i++) {
+        debugInfoMeasurements[i] = MeasureTextEx(style.font, formattedDebugInfo[i], style.size, style.charSpacing);
+        debugTextMaxWidth = fmaxf(debugTextMaxWidth, debugInfoMeasurements[i].x);
+    }
+    v2 pos = {4.f, 4.f};
+    v2 margin = {4.f, 4.f};
+    DrawRectangle(pos.x, pos.y, debugTextMaxWidth + margin.x * 2.f, debugInfoMeasurements[0].y * textNum + margin.y * 2.f, {0, 0, 0, 200});
+    pos += margin;
+    for (i32 i = 0; i < textNum; i++) {
+        DrawTextEx(style.font, formattedDebugInfo[i], pos, style.size, style.charSpacing, WHITE);
+        pos.y += debugInfoMeasurements[0].y;
+    }
 }
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
@@ -1279,13 +1329,14 @@ void InputInit(Input* input) {
     input->map[INPUT_RIGHT] = KEY_RIGHT;
     input->map[INPUT_DOWN] = KEY_DOWN;
     input->map[INPUT_UP] = KEY_UP;
-    input->map[INPUT_TOGGLE_DEBUG] = KEY_BACKSPACE;
+    input->map[INPUT_DEBUG_TOGGLE] = KEY_BACKSPACE;
     input->map[INPUT_DEBUG_LEFT] = KEY_A;
     input->map[INPUT_DEBUG_RIGHT] = KEY_D;
     input->map[INPUT_DEBUG_FORWARD] = KEY_W;
     input->map[INPUT_DEBUG_BACKWARD] = KEY_S;
     input->map[INPUT_DEBUG_UP] = KEY_Q;
     input->map[INPUT_DEBUG_DOWN] = KEY_E;
+    input->map[INPUT_DEBUG_CONTROL] = KEY_LEFT_CONTROL;
 }
 void InputUpdate(Input* input) {
     for (i32 i = 0; i < INPUT_COUNT; i++) {
@@ -1293,6 +1344,12 @@ void InputUpdate(Input* input) {
         input->down[i] = IsKeyDown(input->map[i]);
         input->up[i] = IsKeyUp(input->map[i]);
     }
+}
+bool InputCheckPressedCombination(i32 a, i32 b) {
+    return (global::input.down[a] && global::input.pressed[b]) || (global::input.down[b] && global::input.pressed[a]);
+}
+bool InputCheckPressedExclusive(i32 ind, i32 exclude) {
+    return global::input.pressed[ind] && !global::input.down[exclude];
 }
 
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
@@ -1600,9 +1657,9 @@ void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
 }
 void CameraManagerUpdate(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
-    camMan->cameraMode = global::debugEnabled;
+    camMan->cameraMode = global::debugCameraEnabled;
 
-    if (global::debugEnabled && global::currentCamera != &camMan->debugCamera) {
+    if (global::debugCameraEnabled && global::currentCamera != &camMan->debugCamera) {
         camMan->debugCamera.position = camMan->playerCamera.position;
         camMan->debugCamera.target = camMan->playerCamera.target;
         camMan->debugCamera.projection = camMan->playerCamera.projection;
@@ -1661,7 +1718,7 @@ void CameraUpdateDebug(Camera* camera, float speed) {
         camera->position.x += hDirection.x * speed;
         camera->position.z += hDirection.y * speed;
     }
-    
+
     camera->position.y += input.y * speed;
     camera->target = camera->position + targetDirection;
 }
@@ -1873,7 +1930,7 @@ String* StringListGet(StringList* list, u32 ind) {
     return list->data + ind;
 }
 
-void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
+void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info) {
     const u32 resdiv = info.resdiv;
     const Image *image = info.heightmapImage;
     const u32 stride = PixelformatGetStride(image->format);
@@ -1893,20 +1950,46 @@ void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info, Material materia
         }
     }
 
-    Mesh hmMesh = GenMeshHeightmap(*image, info.size);
     hm->heightData = heightData;
-    hm->heightmap = *image;
     hm->heightDataWidth = heightDataWidth;
     hm->heightDataHeight = heightDataHeight;
     hm->size = info.size;
-    hm->texture = *info.terrainMapTexture;
-    hm->model = LoadModelFromMesh(hmMesh);
-    hm->model.materials[0] = material;
-    hm->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
-    hm->model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
     hm->position = info.position;
-    hm->debugModel = {};
 }
+// void HeightmapInitBackup(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
+//     const u32 resdiv = info.resdiv;
+//     const Image *image = info.heightmapImage;
+//     const u32 stride = PixelformatGetStride(image->format);
+//     const u32 len = info.heightmapImage->width * info.heightmapImage->height;
+//     const u32 heightDataWidth = image->width >> resdiv;
+//     const u32 heightDataHeight = image->height >> resdiv;
+
+//     float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
+//     byte* data = (byte*)info.heightmapImage->data;
+//     u32 dataW = heightDataWidth;
+//     u32 imgw = image->width;
+
+//     for (u32 x = 0; x < heightDataWidth; x++) {
+//         for (u32 y = 0; y < heightDataHeight; y++) {
+//             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
+//             heightData[x + y * dataW] = ((float)value / 255.f) * info.size.y;
+//         }
+//     }
+
+//     Mesh hmMesh = GenMeshHeightmap(*image, info.size);
+//     hm->heightData = heightData;
+//     hm->heightmap = *image;
+//     hm->heightDataWidth = heightDataWidth;
+//     hm->heightDataHeight = heightDataHeight;
+//     hm->size = info.size;
+//     hm->texture = *info.terrainMapTexture;
+//     hm->model = LoadModelFromMesh(hmMesh);
+//     hm->model.materials[0] = material;
+//     hm->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
+//     hm->model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
+//     hm->position = info.position;
+//     hm->debugModel = {};
+// }
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     v2 rectBegin = {heightmap.position.x, heightmap.position.z};
     v2 rectEnd = rectBegin + v2{heightmap.size.x, heightmap.size.z};
@@ -1928,15 +2011,9 @@ float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     }
     return 0.f;
 }
-void HeightmapFree(void* heightmap) {
-    free(((Heightmap*)heightmap)->heightData);
-}
-void HeightmapDraw(void* _hm) {
-    Heightmap* hm = (Heightmap*)_hm;
-    DrawModel(hm->model, hm->position, 1.f, WHITE);
-}
-GameObject HeightmapPack(Heightmap* hm) {
-    return GameObjectCreate(hm, nullptr, HeightmapDraw, nullptr, HeightmapFree);
+void HeightmapFree(Heightmap* hm) {
+    free(hm->heightData);
+    memset(hm, NULL, sizeof(Heightmap));
 }
 
 #define MAX_MATERIAL_MAPS 12
@@ -2195,26 +2272,22 @@ i32 SceneSetup01(GameObject* goOut) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    v3 terrainSize = {1000.f, 100.f, 1000.f};
+    v3 terrainSize = {100.f, 100.f, 100.f};
     v3 terrainPosition = terrainSize / -2.f;
     terrainPosition.y = 0.f;
 
     HeightmapGenerationInfo hgi = {};
     hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
-    hgi.terrainMapTexture = &global::textures[global::TEXTURE_TERRAINMAP_BLURRED];
-    hgi.terrainTexture = &global::textures[global::TEXTURE_TERRAIN];
     hgi.position = terrainPosition;
     hgi.size = terrainSize;
     hgi.resdiv = 2;
     Heightmap* hm = MemoryReserve<Heightmap>();
-    HeightmapInit(hm, hgi, global::materials[global::MATERIAL_LIT_TERRAIN]);
+    HeightmapInit(hm, hgi);
     global::groups["terrainHeightmap"] = hm;
-    goOut[goCount] = HeightmapPack(hm); goCount++;
 
     ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = global::models[global::MODEL_TREE];
-    BoundingBox miBb = GenBoundingBoxMeshes(mi->model.meshes, mi->model.meshCount);
-    mi->position = miBb.min + (miBb.max - miBb.min) / 2.f;
+    mi->model = global::models[global::MODEL_LEVEL];
+    mi->position = terrainPosition;
     mi->scale = 1.f;
     mi->tint = WHITE;
     goOut[goCount] = ModelInstancePack(mi); goCount++;
