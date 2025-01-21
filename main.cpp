@@ -594,43 +594,35 @@ namespace global {
     enum GAME_MODELS {
         MODEL_CAB,
         MODEL_TREE,
-        MODEL_LEVEL,
+        MODEL_LEVEL0,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "cab.glb",
         "tree.glb",
-        "level_prototypeB.glb"
+        "level0.glb"
     };
     Model models[MODEL_COUNT];
 
     enum GAME_TEXTURES {
         TEXTURE_STAR,
-        TEXTURE_TERRAIN,
-        TEXTURE_TERRAINMAP_BLURRED,
         TEXTURE_NPATCH,
         TEXTURE_COUNT
     };
     const char *texturePaths[global::TEXTURE_COUNT] = {
         "star.png",
-        "terrain.png",
-        "terrainmap2.png",
         "npatch.png"
     };
     Texture2D textures[global::TEXTURE_COUNT];
 
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
-        IMAGE_HEIGHTMAP,
-        IMAGE_TERRAINMAP,
-        IMAGE_TERRAINMAP_TEST,
+        IMAGE_HEIGHTMAP_LEVEL0,
         IMAGE_COUNT
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
-        "heightmap2.png",
-        "terrainmap2.png",
-        "terrainmapTest.png"
+        "heightmap_level0.png"
     };
     Image images[IMAGE_COUNT];
 
@@ -1959,40 +1951,6 @@ void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info) {
     hm->size = info.size;
     hm->position = info.position;
 }
-// void HeightmapInitBackup(Heightmap* hm, HeightmapGenerationInfo info, Material material) {
-//     const u32 resdiv = info.resdiv;
-//     const Image *image = info.heightmapImage;
-//     const u32 stride = PixelformatGetStride(image->format);
-//     const u32 len = info.heightmapImage->width * info.heightmapImage->height;
-//     const u32 heightDataWidth = image->width >> resdiv;
-//     const u32 heightDataHeight = image->height >> resdiv;
-
-//     float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
-//     byte* data = (byte*)info.heightmapImage->data;
-//     u32 dataW = heightDataWidth;
-//     u32 imgw = image->width;
-
-//     for (u32 x = 0; x < heightDataWidth; x++) {
-//         for (u32 y = 0; y < heightDataHeight; y++) {
-//             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
-//             heightData[x + y * dataW] = ((float)value / 255.f) * info.size.y;
-//         }
-//     }
-
-//     Mesh hmMesh = GenMeshHeightmap(*image, info.size);
-//     hm->heightData = heightData;
-//     hm->heightmap = *image;
-//     hm->heightDataWidth = heightDataWidth;
-//     hm->heightDataHeight = heightDataHeight;
-//     hm->size = info.size;
-//     hm->texture = *info.terrainMapTexture;
-//     hm->model = LoadModelFromMesh(hmMesh);
-//     hm->model.materials[0] = material;
-//     hm->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = *info.terrainMapTexture;
-//     hm->model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = *info.terrainTexture;
-//     hm->position = info.position;
-//     hm->debugModel = {};
-// }
 float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
     v2 rectBegin = {heightmap.position.x, heightmap.position.z};
     v2 rectEnd = rectBegin + v2{heightmap.size.x, heightmap.size.z};
@@ -2275,25 +2233,22 @@ i32 SceneSetup01(GameObject* goOut) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    v3 terrainSize = {100.f, 100.f, 100.f};
-    v3 terrainPosition = terrainSize / -2.f;
-    terrainPosition.y = 0.f;
+    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    mi->model = global::models[global::MODEL_LEVEL0];
+    mi->position = {0.f, 0.f, 0.f};
+    mi->scale = 1.f;
+    mi->tint = WHITE;
+    goOut[goCount] = ModelInstancePack(mi); goCount++;
 
+    BoundingBox bb = GenBoundingBoxMesh(mi->model.meshes[0]);
     HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP];
-    hgi.position = terrainPosition;
-    hgi.size = terrainSize;
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP_LEVEL0];
+    hgi.position = bb.min;
+    hgi.size = bb.max - bb.min;
     hgi.resdiv = 2;
     Heightmap* hm = MemoryReserve<Heightmap>();
     HeightmapInit(hm, hgi);
     global::groups["terrainHeightmap"] = hm;
-
-    ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = global::models[global::MODEL_LEVEL];
-    mi->position = terrainPosition;
-    mi->scale = 1.f;
-    mi->tint = WHITE;
-    goOut[goCount] = ModelInstancePack(mi); goCount++;
 
     Cab* cab = MemoryReserve<Cab>();
     CabInit(cab);
