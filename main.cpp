@@ -415,6 +415,7 @@ struct Cab {
 void CabInit(Cab* cab);
 void CabUpdate(void* cab);
 void CabDraw3d(void* cab);
+void CabDrawImGui(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
 GameObject CabPack(Cab* cab);
 
@@ -662,9 +663,15 @@ namespace global {
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
     EventHandler eventHandler;
+    const i32 screenWidth = 1440;
+    const i32 screenHeight = 800;
+}
 
-    bool debugCameraEnabled = false;
-    bool debugOverlayEnabled = false;
+namespace debug {
+    bool cameraEnabled = false;
+    bool overlayEnabled = false;
+    ImVec2 inspectorSize = ImVec2(300.f, global::screenHeight);
+    ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, global::screenHeight);
 }
 
 void LoadGameShaders() {
@@ -807,16 +814,13 @@ void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
-const i32 screenWidth = 1440;
-const i32 screenHeight = 800;
-
 i32 SceneSetup01(GameObject* goOut);
 i32 SceneSetup_DialogueTest(GameObject* go);
 i32 SceneSetup_ModelTest(GameObject* go);
 
 i32 main() {
     SetTraceLogLevel(4);
-    InitWindow(screenWidth, screenHeight, "Midnight Driver");
+    InitWindow(global::screenWidth, global::screenHeight, "Midnight Driver");
     SetTargetFPS(FRAMERATE);
     DisableCursor();
     rlImGuiSetup(true);
@@ -834,9 +838,9 @@ i32 main() {
         InputUpdate(&global::input);
 
         if (InputCheckPressedCombination(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
-            global::debugCameraEnabled = !global::debugCameraEnabled;
+            debug::cameraEnabled = !debug::cameraEnabled;
         } else if (InputCheckPressedExclusive(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
-            global::debugOverlayEnabled = !global::debugOverlayEnabled;
+            debug::overlayEnabled = !debug::overlayEnabled;
         }
 
         GameObjectsUpdate(gameObject, gameObjectCount);
@@ -848,22 +852,28 @@ i32 main() {
         }
 
         BeginDrawing();
-        rlImGuiBegin();
-        GameObjectsDrawImGui(gameObject, gameObjectCount);
-        rlImGuiEnd();
         ClearBackground(BLACK);
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
                 GameObjectsDraw3d(gameObject, gameObjectCount);
-                if (global::debugOverlayEnabled) {
+                if (debug::overlayEnabled) {
                     DrawDebug3d();
                 }
             EndMode3D();
         }
         GameObjectsDrawUi(gameObject, gameObjectCount);
-        if (global::debugOverlayEnabled) {
+        if (debug::overlayEnabled) {
             DrawDebugUi();
         }
+        rlImGuiBegin();
+        ImGui::Begin("Objects", &debug::overlayEnabled);
+        ImVec2 pos = ImVec2(global::screenWidth - 300.f, 0.f);
+        ImVec2 size = ImVec2(300.f, global::screenHeight);
+        ImGui::SetWindowPos(pos);
+        ImGui::SetWindowSize(size);
+        GameObjectsDrawImGui(gameObject, gameObjectCount);
+        ImGui::End();
+        rlImGuiEnd();
         EndDrawing();
     }
 
@@ -899,7 +909,7 @@ void DrawDebug3d() {
     DrawGrid(20, 1.f);
 }
 void DrawDebugUi() {
-    DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
+    DrawCrosshair(global::screenWidth / 2, global::screenHeight / 2, WHITE);
     TextDrawingStyle style = global::debugDrawingStyle;
     const char* debugInfoHeaders[] = {
         "Memory usage:",
@@ -1059,8 +1069,8 @@ void TypewriterInit(Typewriter* tw) {
     tw->autoContinueDelay = 1.f;
     tw->autoHideOnEndDelay = 3.f;
     tw->_autoAdvanceCountdown = -1.f;
-    tw->x = screenWidth / 2;
-    tw->y = screenHeight / 2 - screenHeight / 4 - screenHeight / 8;
+    tw->x = global::screenWidth / 2;
+    tw->y = global::screenHeight / 2 - global::screenHeight / 4 - global::screenHeight / 8;
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
@@ -1142,8 +1152,8 @@ void DialogueOptionsInit(DialogueOptions* dopt) {
     dopt->options = nullptr;
     dopt->count = 0;
     dopt->visible = false;
-    dopt->x = screenWidth / 2;
-    dopt->y = screenHeight / 2 + screenHeight / 4;
+    dopt->x = global::screenWidth / 2;
+    dopt->y = global::screenHeight / 2 + global::screenHeight / 4;
     dopt->textStyle = &global::textDrawingStyle;
     dopt->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
     dopt->npatchTexture = global::textures[global::TEXTURE_NPATCH];
@@ -1317,6 +1327,7 @@ GameObject DialogueSequencePack(DialogueSequence* dseq) {
     go.data = dseq;
     go.Update = DialogueSequenceUpdate;
     go.DrawUi = DialogueSequenceDrawUi;
+    return go;
 }
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1665,6 +1676,10 @@ void CabDraw3d(void* _cab) {
         DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], transform);
     }
 }
+void CabDrawImGui(void* _cab) {
+    Cab* cab = (Cab*)_cab;
+    ImGui::Text("Hello World!");
+}
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
 }
@@ -1672,6 +1687,7 @@ GameObject CabPack(Cab *cab) {
     GameObject go = GameObjectCreate(cab);
     go.Update = CabUpdate;
     go.Draw3d = CabDraw3d;
+    go.DrawImGui = CabDrawImGui;
     return go;
 }
 
@@ -1699,9 +1715,9 @@ void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
 }
 void CameraManagerUpdate(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
-    camMan->cameraMode = global::debugCameraEnabled;
+    camMan->cameraMode = debug::cameraEnabled;
 
-    if (global::debugCameraEnabled && global::currentCamera != &camMan->debugCamera) {
+    if (debug::cameraEnabled && global::currentCamera != &camMan->debugCamera) {
         camMan->debugCamera.position = camMan->playerCamera.position;
         camMan->debugCamera.target = camMan->playerCamera.target;
         camMan->debugCamera.projection = camMan->playerCamera.projection;
@@ -1725,9 +1741,9 @@ void CameraManagerUpdate(void* _camMan) {
 void CameraManagerDrawUi(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
     if (camMan->cameraMode == 1) {
-        DrawTextShadow("Debug cam", 4, screenHeight - 20, 16, RED, BLACK);
+        DrawTextShadow("Debug cam", 4, global::screenHeight - 20, 16, RED, BLACK);
     }
-    DrawCrosshair(screenWidth / 2, screenHeight / 2, WHITE);
+    DrawCrosshair(global::screenWidth / 2, global::screenHeight / 2, WHITE);
 }
 void CameraManagerFree(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
