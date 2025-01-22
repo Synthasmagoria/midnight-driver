@@ -1,3 +1,5 @@
+#define NO_FONT_AWESOME
+
 #include "raylib.h"
 #include "raymath.h"
 #include "stdlib.h"
@@ -5,6 +7,9 @@
 #include "stdio.h"
 #include "rlgl.h"
 #include "assert.h"
+
+#include "imgui.h"
+#include "rlImGui.h"
 
 #include <unordered_map>
 #include <string>
@@ -82,9 +87,10 @@ struct GameObject {
     void (*Draw3d) (void*);
     void (*DrawUi) (void*);
     void (*Free) (void*);
+    void (*DrawImGui) (void*);
     void* data;
 };
-GameObject GameObjectCreate(void* data, void(*Update)(void*), void(*Draw3d)(void*), void(*DrawUi)(void*), void(*Free)(void*));
+GameObject GameObjectCreate(void* data);
 
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
 enum EVENT_HANDLER_EVENTS {
@@ -206,7 +212,7 @@ struct DialogueSequence {
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
-void DialogueSequenceDraw(void* _dseq);
+void DialogueSequenceDrawUi(void* _dseq);
 void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* _dseq);
@@ -299,7 +305,7 @@ struct InstanceMeshRenderDataBlocks {
 };
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
-void ForestDraw(void* _imrd);
+void ForestDraw3d(void* _imrd);
 GameObject ForestPack(InstanceMeshRenderData* forest);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
@@ -321,7 +327,7 @@ struct ParticleSystem {
 void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material);
 void ParticleSystemFree(void* psys);
 void ParticleSystemUpdate(void* psys);
-void ParticleSystemDraw(void* psys);
+void ParticleSystemDraw3d(void* psys);
 GameObject ParticleSystemPack(ParticleSystem *psys);
 
 struct BillboardParticle {
@@ -408,7 +414,7 @@ struct Cab {
 };
 void CabInit(Cab* cab);
 void CabUpdate(void* cab);
-void CabDraw(void* cab);
+void CabDraw3d(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
 GameObject CabPack(Cab* cab);
 
@@ -416,7 +422,7 @@ struct Skybox {
     Model model;
     Shader shader;
 };
-void SkyboxDraw(void* _skybox);
+void SkyboxDraw3d(void* _skybox);
 GameObject SkyboxPack(Skybox* skybox);
 
 struct CameraManager {
@@ -443,7 +449,7 @@ struct ModelInstance {
     float scale;
     Color tint;
 };
-void ModelInstanceDraw(void* _mi);
+void ModelInstanceDraw3d(void* _mi);
 GameObject ModelInstancePack(ModelInstance* mi);
 
 inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
@@ -799,6 +805,7 @@ void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
 const i32 screenWidth = 1440;
 const i32 screenHeight = 800;
@@ -812,6 +819,7 @@ i32 main() {
     InitWindow(screenWidth, screenHeight, "Midnight Driver");
     SetTargetFPS(FRAMERATE);
     DisableCursor();
+    rlImGuiSetup(true);
 
     LoadGameResources();
     InitGlobals();
@@ -840,6 +848,9 @@ i32 main() {
         }
 
         BeginDrawing();
+        rlImGuiBegin();
+        GameObjectsDrawImGui(gameObject, gameObjectCount);
+        rlImGuiEnd();
         ClearBackground(BLACK);
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
@@ -950,6 +961,13 @@ void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].Free != nullptr) {
             gameObjects[i].Free(gameObjects[i].data);
+        }
+    }
+}
+void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].DrawImGui != nullptr) {
+            gameObjects[i].DrawImGui(gameObjects[i].data);
         }
     }
 }
@@ -1100,7 +1118,10 @@ void TypewriterDraw(void* _tw) {
     StringDestroy(substr);
 }
 GameObject TypewriterPack(Typewriter* tw) {
-    return GameObjectCreate(tw, TypewriterUpdate, nullptr, TypewriterDraw, nullptr);
+    GameObject go = GameObjectCreate(tw);
+    go.Update = TypewriterUpdate;
+    go.DrawUi = TypewriterDraw;
+    return go;
 }
 void TypewriterEvent_LineComplete(Typewriter* tw) {
     EventArgs_TypewriterLineComplete args;
@@ -1204,7 +1225,11 @@ void DialogueOptionsDraw(void* _dopt) {
     free(textSize);
 }
 GameObject DialogueOptionsPack(DialogueOptions* dopt) {
-    return GameObjectCreate(dopt, DialogueOptionsUpdate, nullptr, DialogueOptionsDraw, nullptr);
+    GameObject go = {};
+    go.data = dopt;
+    go.Update = DialogueOptionsUpdate;
+    go.DrawUi = DialogueOptionsDraw;
+    return go;
 }
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
@@ -1266,7 +1291,7 @@ void DialogueSequenceUpdate(void* _dseq) {
     DialogueOptionsUpdate(&dseq->options);
     TypewriterUpdate(&dseq->typewriter);
 }
-void DialogueSequenceDraw(void* _dseq) {
+void DialogueSequenceDrawUi(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     DialogueOptionsDraw(&dseq->options);
     TypewriterDraw(&dseq->typewriter);
@@ -1287,8 +1312,11 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     ListInit(dss->link, 50);
     return dss;
 }
-GameObject DialogueSequencePack(DialogueSequence* _dseq) {
-    return GameObjectCreate(_dseq, DialogueSequenceUpdate, nullptr, DialogueSequenceDraw, DialogueSequenceFree);
+GameObject DialogueSequencePack(DialogueSequence* dseq) {
+    GameObject go = GameObjectCreate(dseq);
+    go.data = dseq;
+    go.Update = DialogueSequenceUpdate;
+    go.DrawUi = DialogueSequenceDrawUi;
 }
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
@@ -1443,12 +1471,14 @@ InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info
     imrd.transforms = transformsV;
     return imrd;
 }
-void ForestDraw(void* _imrd) {
+void ForestDraw3d(void* _imrd) {
     InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
     DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
 }
 GameObject ForestPack(InstanceMeshRenderData* forest) {
-    return GameObjectCreate((void*)forest, nullptr, nullptr, nullptr, ForestDraw);
+    GameObject go = GameObjectCreate(forest);
+    go.Draw3d = ForestDraw3d;
+    return go;
 }
 
 void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material) {
@@ -1477,12 +1507,16 @@ void ParticleSystemUpdate(void* _psys) {
         psys->_transforms[i] *= transpose;
     }
 }
-void ParticleSystemDraw(void* _psys) {
+void ParticleSystemDraw3d(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
 }
 GameObject ParticleSystemPack(ParticleSystem *psys) {
-    return GameObjectCreate((void*)psys, ParticleSystemUpdate, ParticleSystemDraw, nullptr, ParticleSystemFree);
+    GameObject go = GameObjectCreate(psys);
+    go.Update = ParticleSystemUpdate;
+    go.Draw3d = ParticleSystemDraw3d;
+    go.Free = ParticleSystemFree;
+    return go;
 }
 
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera) {
@@ -1624,7 +1658,7 @@ void CabUpdate(void* _cab) {
     }
     float incline = cab->position.y - cab->_heightPrev;
 }
-void CabDraw(void* _cab) {
+void CabDraw3d(void* _cab) {
     Cab* cab = (Cab*)_cab;
     mat4 transform = cab->_transform * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
     for (i32 i = 0; i < cab->model.meshCount; i++) {
@@ -1635,10 +1669,13 @@ v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
 }
 GameObject CabPack(Cab *cab) {
-    return GameObjectCreate(cab, CabUpdate, CabDraw, nullptr, nullptr);
+    GameObject go = GameObjectCreate(cab);
+    go.Update = CabUpdate;
+    go.Draw3d = CabDraw3d;
+    return go;
 }
 
-void SkyboxDraw(void* _skybox) {
+void SkyboxDraw3d(void* _skybox) {
     Skybox* skybox = (Skybox*)_skybox;
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
@@ -1646,8 +1683,10 @@ void SkyboxDraw(void* _skybox) {
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
 }
-GameObject SkyboxPack(Skybox* skybox) {
-    return GameObjectCreate(skybox, nullptr, SkyboxDraw, nullptr, nullptr);
+GameObject SkyboxPack(Skybox* sb) {
+    GameObject go = GameObjectCreate(sb);
+    go.Draw3d = SkyboxDraw3d;
+    return go;
 }
 
 void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
@@ -1696,8 +1735,12 @@ void CameraManagerFree(void* _camMan) {
         global::currentCamera = nullptr;
     }
 }
-GameObject CameraManagerPack(CameraManager* camMan) {
-    return GameObjectCreate(camMan, CameraManagerUpdate, nullptr, CameraManagerDrawUi, CameraManagerFree);
+GameObject CameraManagerPack(CameraManager* cm) {
+    GameObject go = GameObjectCreate(cm);
+    go.Update = CameraManagerUpdate;
+    go.DrawUi = CameraManagerDrawUi;
+    go.Free = CameraManagerFree;
+    return go;
 }
 void CameraUpdateCab(Camera* camera, Cab* cab) {
     v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
@@ -1753,21 +1796,19 @@ Camera CameraGetDefault() {
     return camera;
 }
 
-void ModelInstanceDraw(void* _mi) {
+void ModelInstanceDraw3d(void* _mi) {
     ModelInstance *mi = (ModelInstance*)_mi;
     DrawModel(mi->model, mi->position, mi->scale, mi->tint);
 }
 GameObject ModelInstancePack(ModelInstance* mi) {
-    return GameObjectCreate(mi, nullptr, ModelInstanceDraw, nullptr, nullptr);
+    GameObject go = GameObjectCreate(mi);
+    go.Draw3d = ModelInstanceDraw3d;
+    return go;
 }
 
-GameObject GameObjectCreate(void* data, void(*update)(void*), void(*draw3d)(void*), void(*drawUi)(void*), void(*free)(void*)) {
+GameObject GameObjectCreate(void* data) {
     GameObject go = {};
     go.data = data;
-    go.Update = update;
-    go.Draw3d = draw3d;
-    go.DrawUi = drawUi;
-    go.Free = free;
     return go;
 }
 
