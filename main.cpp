@@ -264,6 +264,7 @@ void InputInit(Input* input);
 void InputUpdate(Input* input);
 bool InputCheckPressedCombination(i32 a, i32 b);
 bool InputCheckPressedExclusive(i32 ind, i32 exclude);
+bool InputCheckPressedMod(i32 ind, bool shift, bool ctrl, bool alt);
 
 // TODO: Removed deprecated
 struct ForestGenerationInfo {
@@ -670,8 +671,10 @@ namespace global {
 namespace debug {
     bool cameraEnabled = false;
     bool overlayEnabled = false;
+    bool cursorEnabled = false;
+    bool cursorEnabledPrevious = false;
     ImVec2 inspectorSize = ImVec2(300.f, global::screenHeight);
-    ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, global::screenHeight);
+    ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, 0.f);
 }
 
 void LoadGameShaders() {
@@ -822,8 +825,9 @@ i32 main() {
     SetTraceLogLevel(4);
     InitWindow(global::screenWidth, global::screenHeight, "Midnight Driver");
     SetTargetFPS(FRAMERATE);
-    DisableCursor();
     rlImGuiSetup(true);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    DisableCursor();
 
     LoadGameResources();
     InitGlobals();
@@ -837,10 +841,12 @@ i32 main() {
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
 
-        if (InputCheckPressedCombination(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
+        if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, false, false)) {
             debug::cameraEnabled = !debug::cameraEnabled;
-        } else if (InputCheckPressedExclusive(INPUT_DEBUG_TOGGLE, INPUT_DEBUG_CONTROL)) {
+        } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, true, false)) {
             debug::overlayEnabled = !debug::overlayEnabled;
+        } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, true, true, false)) {
+            debug::cursorEnabled = !debug::cursorEnabled;
         }
 
         GameObjectsUpdate(gameObject, gameObjectCount);
@@ -863,17 +869,17 @@ i32 main() {
         }
         GameObjectsDrawUi(gameObject, gameObjectCount);
         if (debug::overlayEnabled) {
-            DrawDebugUi();
+            rlImGuiBegin();
+            ImGui::SetWindowPos(debug::inspectorPosition);
+            ImGui::SetWindowSize(debug::inspectorSize);
+            GameObjectsDrawImGui(gameObject, gameObjectCount);
+            rlImGuiEnd();
         }
-        rlImGuiBegin();
-        ImGui::Begin("Objects", &debug::overlayEnabled);
-        ImVec2 pos = ImVec2(global::screenWidth - 300.f, 0.f);
-        ImVec2 size = ImVec2(300.f, global::screenHeight);
-        ImGui::SetWindowPos(pos);
-        ImGui::SetWindowSize(size);
-        GameObjectsDrawImGui(gameObject, gameObjectCount);
-        ImGui::End();
-        rlImGuiEnd();
+        if (!debug::cursorEnabled) {
+            DisableCursor();
+            ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        }
+        debug::cursorEnabledPrevious = debug::cursorEnabled;
         EndDrawing();
     }
 
@@ -1381,6 +1387,38 @@ bool InputCheckPressedCombination(i32 a, i32 b) {
 bool InputCheckPressedExclusive(i32 ind, i32 exclude) {
     return global::input.pressed[ind] && !global::input.down[exclude];
 }
+bool InputCheckPressedMod(i32 ind, bool shift, bool ctrl, bool alt) {
+    bool pressed = global::input.pressed[ind];
+    bool modifiersCheck = true;
+    if (shift) {
+        if (!IsKeyDown(KEY_LEFT_SHIFT) && !IsKeyDown(KEY_RIGHT_SHIFT)) {
+            modifiersCheck = false;
+        }
+    } else {
+        if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+            modifiersCheck = false;
+        }
+    }
+    if (ctrl) {
+        if (!IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL)) {
+            modifiersCheck = false;
+        }
+    } else {
+        if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) {
+            modifiersCheck = false;
+        }
+    }
+    if (alt) {
+        if (!IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT)) {
+            modifiersCheck = false;
+        }
+    } else {
+        if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) {
+            modifiersCheck = false;
+        }
+    }
+    return pressed && modifiersCheck;
+}
 
 void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
     UnloadModel(imrd._model);
@@ -1678,7 +1716,7 @@ void CabDraw3d(void* _cab) {
 }
 void CabDrawImGui(void* _cab) {
     Cab* cab = (Cab*)_cab;
-    ImGui::Text("Hello World!");
+    ImGui::DragFloat3("Position", (float*)&cab->position);
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
@@ -1769,6 +1807,9 @@ void CameraUpdateCab(Camera* camera, Cab* cab) {
     camera->target = frontSeatPosition + cab->direction;
 }
 void CameraUpdateDebug(Camera* camera, float speed) {
+    if (debug::cursorEnabled) {
+        return;
+    }
     v3 targetDirection = camera->target - camera->position;
     float sensitivity = 0.002f;
     v2 mouseDelta = GetMouseDelta();
