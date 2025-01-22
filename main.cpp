@@ -381,7 +381,7 @@ struct Heightmap {
     u32 width;
 };
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info);
-float HeightmapSampleHeight(Heightmap heightmap, float x, float z);
+float HeightmapSampleHeight(Heightmap* heightmap, float x, float z);
 void HeightmapFree(Heightmap* hm);
 
 struct Cab {
@@ -404,6 +404,7 @@ struct Cab {
     float _speed;
     mat4 _transform;
     float _turnAngle;
+    float _heightPrev;
 };
 void CabInit(Cab* cab);
 void CabUpdate(void* cab);
@@ -856,7 +857,6 @@ i32 main() {
     }
 
     GameObjectsFree(gameObject, gameObjectCount);
-
     MemoryPoolDestroy(&global::localMemoryPool);
     MemoryPoolDestroy(&global::persistentMemoryPool);
     UnloadGameResources();
@@ -1374,7 +1374,7 @@ InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh
                 transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
                 transforms[treeCount] *= MatrixTranslate(
                     treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
-                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(*info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
+                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
                     treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
                 treeCount++;
             }
@@ -1568,6 +1568,9 @@ void CabInit(Cab *cab) {
     cab->accelerationCurve = {{0.f, 0.f}, {0.1f, 0.55f}, {1.f, 1.f}};
     cab->reverseAccelerationCurve = {{0.f, 0.f}, {-0.236f, -0.252f}, {-1.f, -0.4f}};
     cab->_transform = MatrixIdentity();
+    cab->_heightPrev = 0.f;
+    cab->_speed = 0.f;
+    cab->_turnAngle = 0.f;
     global::groups["cab"] = (void*)cab;
 }
 void CabUpdate(void* _cab) {
@@ -1605,12 +1608,21 @@ void CabUpdate(void* _cab) {
 
     // TODO: Inefficient matrix multiplication
     cab->direction = cab->direction * yawRotationMatrix;
-    cab->velocity = cab->direction * stepSpeed;
-    cab->position += cab->velocity;
-    cab->position.y = HeightmapSampleHeight(
-        *((Heightmap*)global::groups["terrainHeightmap"]),
-        cab->position.x,
-        cab->position.z);
+    v2 horizontalVelocity = Vector2Normalize({cab->direction.x, cab->direction.z}) * stepSpeed;
+    cab->position.x += horizontalVelocity.x;
+    cab->position.z += horizontalVelocity.y;
+    Heightmap* hm = (Heightmap*)global::groups["terrainHeightmap"];
+    if (hm != nullptr) {
+        v3 positionBehind = v3{
+            cab->position.x - cab->direction.x * 0.05f,
+            0.f,
+            cab->position.z - cab->direction.z * 0.05f};
+        positionBehind.y = HeightmapSampleHeight(hm, positionBehind.x, positionBehind.z);
+        cab->position.y = HeightmapSampleHeight(hm, cab->position.x, cab->position.z);
+
+
+    }
+    float incline = cab->position.y - cab->_heightPrev;
 }
 void CabDraw(void* _cab) {
     Cab* cab = (Cab*)_cab;
@@ -1691,10 +1703,11 @@ void CameraUpdateCab(Camera* camera, Cab* cab) {
     v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
     float turnAngleNorm = cab->_turnAngle / cab->turnAngleMax;
     float cabAngle = atan2f(cab->direction.x, cab->direction.z);
-    v2 directionTilted = Vector2FromAngle(cabAngle + turnAngleNorm * DEG2RAD * 20.f - PI / 2.f);
-    v3 direction = {directionTilted.x, 0.f, directionTilted.y};
+    //v2 directionTilted = Vector2FromAngle(cabAngle + turnAngleNorm * DEG2RAD * 20.f - PI / 2.f);
+    //v3 direction = {directionTilted.x, 0.f, directionTilted.y};
     camera->position = frontSeatPosition;
-    camera->target = frontSeatPosition + direction;
+    //camera->target = frontSeatPosition + direction;
+    camera->target = frontSeatPosition + cab->direction;
 }
 void CameraUpdateDebug(Camera* camera, float speed) {
     v3 targetDirection = camera->target - camera->position;
@@ -1951,23 +1964,23 @@ void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info) {
     hm->size = info.size;
     hm->position = info.position;
 }
-float HeightmapSampleHeight(Heightmap heightmap, float x, float z) {
-    v2 rectBegin = {heightmap.position.x, heightmap.position.z};
-    v2 rectEnd = rectBegin + v2{heightmap.size.x, heightmap.size.z};
+float HeightmapSampleHeight(Heightmap* hm, float x, float z) {
+    v2 rectBegin = {hm->position.x, hm->position.z};
+    v2 rectEnd = rectBegin + v2{hm->size.x, hm->size.z};
     if (PointInRectangle(rectBegin, rectEnd, {x, z})) {
         v2 abspos = v2{x, z} - rectBegin;
-        v2 normpos = abspos / v2{heightmap.size.x, heightmap.size.z};
-        v2 datapos = normpos * v2{(float)heightmap.heightDataWidth, (float)heightmap.heightDataHeight};
+        v2 normpos = abspos / v2{hm->size.x, hm->size.z};
+        v2 datapos = normpos * v2{(float)hm->heightDataWidth, (float)hm->heightDataHeight};
         v2 dataposFract = Vector2Fract(datapos);
         u32 dataX = datapos.x;
         u32 dataY = datapos.y;
-        bool nextX = dataX + 1 < heightmap.heightDataWidth;
-        bool nextY = dataY + 1 < heightmap.heightDataHeight;
+        bool nextX = dataX + 1 < hm->heightDataWidth;
+        bool nextY = dataY + 1 < hm->heightDataHeight;
         // TODO: Could probably just pad the data by 1 on the right and bottom
-        float a = heightmap.heightData[dataX + dataY * heightmap.heightDataWidth];
-        float b = nextX ? heightmap.heightData[(dataX+1) + dataY * heightmap.heightDataWidth] : 0.f;
-        float c = nextY ? heightmap.heightData[dataX + (dataY + 1) * heightmap.heightDataWidth] : 0.f;
-        float d = nextX && nextY ? heightmap.heightData[(dataX + 1) + (dataY + 1) * heightmap.heightDataWidth] : 0.f;
+        float a = hm->heightData[dataX + dataY * hm->heightDataWidth];
+        float b = nextX ? hm->heightData[(dataX+1) + dataY * hm->heightDataWidth] : 0.f;
+        float c = nextY ? hm->heightData[dataX + (dataY + 1) * hm->heightDataWidth] : 0.f;
+        float d = nextX && nextY ? hm->heightData[(dataX + 1) + (dataY + 1) * hm->heightDataWidth] : 0.f;
         return Lerp(Lerp(a, b, dataposFract.x), Lerp(c, d, dataposFract.x), dataposFract.y);
     }
     return 0.f;

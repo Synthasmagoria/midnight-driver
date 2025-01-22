@@ -1,6 +1,1 @@
-mkdir build
-cd build
-mkdir debug
-mkdir release
-cd ../
-mkdir obj
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
