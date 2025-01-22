@@ -89,8 +89,10 @@ struct GameObject {
     void (*Free) (void*);
     void (*DrawImGui) (void*);
     void* data;
+    const char* name;
+    u32 id;
 };
-GameObject GameObjectCreate(void* data);
+GameObject GameObjectCreate(void* data, const char* name);
 
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
 enum EVENT_HANDLER_EVENTS {
@@ -664,6 +666,7 @@ namespace global {
     MemoryPool localMemoryPool = {};
     MemoryPool persistentMemoryPool = {};
     EventHandler eventHandler;
+    i32 gameObjectIdCounter = 100000;
     const i32 screenWidth = 1440;
     const i32 screenHeight = 800;
 }
@@ -810,6 +813,7 @@ void InitGlobals();
 
 void DrawDebug3d();
 void DrawDebugUi();
+void DrawDebugImGui();
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
@@ -869,9 +873,11 @@ i32 main() {
         }
         GameObjectsDrawUi(gameObject, gameObjectCount);
         if (debug::overlayEnabled) {
+            DrawDebugUi();
             rlImGuiBegin();
             ImGui::SetWindowPos(debug::inspectorPosition);
             ImGui::SetWindowSize(debug::inspectorSize);
+            DrawDebugImGui();
             GameObjectsDrawImGui(gameObject, gameObjectCount);
             rlImGuiEnd();
         }
@@ -916,39 +922,11 @@ void DrawDebug3d() {
 }
 void DrawDebugUi() {
     DrawCrosshair(global::screenWidth / 2, global::screenHeight / 2, WHITE);
-    TextDrawingStyle style = global::debugDrawingStyle;
-    const char* debugInfoHeaders[] = {
-        "Memory usage:",
-        "Local: %i / %i",
-        "Global: %i / %i",
-        "Player position: %f, %f, %f"
-    };
-    constexpr i32 textNum = sizeof(debugInfoHeaders) / 8;
-    const char* formattedDebugInfo[textNum] = {
-        debugInfoHeaders[0],
-        TextFormat(debugInfoHeaders[1], global::localMemoryPool.location, global::localMemoryPool.size),
-        TextFormat(debugInfoHeaders[2], global::persistentMemoryPool.location, global::persistentMemoryPool.size),
-        ""
-    };
-    Cab* cab = (Cab*)global::groups["cab"];
-    if (cab != nullptr) {
-        formattedDebugInfo[3] = TextFormat(debugInfoHeaders[3], cab->position.x, cab->position.y, cab->position.z);
-    } else {
-        formattedDebugInfo[3] = "Player position: null";
-    }
-    v2 debugInfoMeasurements[textNum];
-    float debugTextMaxWidth = 0.f;
-    for (i32 i = 0; i < textNum; i++) {
-        debugInfoMeasurements[i] = MeasureTextEx(style.font, formattedDebugInfo[i], style.size, style.charSpacing);
-        debugTextMaxWidth = fmaxf(debugTextMaxWidth, debugInfoMeasurements[i].x);
-    }
-    v2 pos = {4.f, 4.f};
-    v2 margin = {4.f, 4.f};
-    DrawRectangle(pos.x, pos.y, debugTextMaxWidth + margin.x * 2.f, debugInfoMeasurements[0].y * textNum + margin.y * 2.f, {0, 0, 0, 200});
-    pos += margin;
-    for (i32 i = 0; i < textNum; i++) {
-        DrawTextEx(style.font, formattedDebugInfo[i], pos, style.size, style.charSpacing, WHITE);
-        pos.y += debugInfoMeasurements[0].y;
+}
+void DrawDebugImGui() {
+    if (ImGui::CollapsingHeader("General info", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text(TextFormat("Local memory: %ib / %ib", global::localMemoryPool.location, global::localMemoryPool.size));
+        ImGui::Text(TextFormat("Global memory: %ib / %ib", global::persistentMemoryPool.location, global::persistentMemoryPool.size));
     }
 }
 
@@ -983,7 +961,9 @@ void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].DrawImGui != nullptr) {
-            gameObjects[i].DrawImGui(gameObjects[i].data);
+            if (ImGui::CollapsingHeader(TextFormat("%s (%i)", gameObjects[i].name, gameObjects[i].id))) {
+                gameObjects[i].DrawImGui(gameObjects[i].data);
+            }
         }
     }
 }
@@ -1134,7 +1114,7 @@ void TypewriterDraw(void* _tw) {
     StringDestroy(substr);
 }
 GameObject TypewriterPack(Typewriter* tw) {
-    GameObject go = GameObjectCreate(tw);
+    GameObject go = GameObjectCreate(tw, "Typewriter");
     go.Update = TypewriterUpdate;
     go.DrawUi = TypewriterDraw;
     return go;
@@ -1329,7 +1309,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* dseq) {
-    GameObject go = GameObjectCreate(dseq);
+    GameObject go = GameObjectCreate(dseq, "Dialogue Sequence");
     go.data = dseq;
     go.Update = DialogueSequenceUpdate;
     go.DrawUi = DialogueSequenceDrawUi;
@@ -1525,7 +1505,7 @@ void ForestDraw3d(void* _imrd) {
     DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
 }
 GameObject ForestPack(InstanceMeshRenderData* forest) {
-    GameObject go = GameObjectCreate(forest);
+    GameObject go = GameObjectCreate(forest, "Forest Manager");
     go.Draw3d = ForestDraw3d;
     return go;
 }
@@ -1561,7 +1541,7 @@ void ParticleSystemDraw3d(void* _psys) {
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
 }
 GameObject ParticleSystemPack(ParticleSystem *psys) {
-    GameObject go = GameObjectCreate(psys);
+    GameObject go = GameObjectCreate(psys, "Particle System");
     go.Update = ParticleSystemUpdate;
     go.Draw3d = ParticleSystemDraw3d;
     go.Free = ParticleSystemFree;
@@ -1722,7 +1702,7 @@ v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->position + cab->frontSeat * cab->_transform;
 }
 GameObject CabPack(Cab *cab) {
-    GameObject go = GameObjectCreate(cab);
+    GameObject go = GameObjectCreate(cab, "Cab");
     go.Update = CabUpdate;
     go.Draw3d = CabDraw3d;
     go.DrawImGui = CabDrawImGui;
@@ -1738,7 +1718,7 @@ void SkyboxDraw3d(void* _skybox) {
     rlEnableDepthMask();
 }
 GameObject SkyboxPack(Skybox* sb) {
-    GameObject go = GameObjectCreate(sb);
+    GameObject go = GameObjectCreate(sb, "Skybox");
     go.Draw3d = SkyboxDraw3d;
     return go;
 }
@@ -1790,7 +1770,7 @@ void CameraManagerFree(void* _camMan) {
     }
 }
 GameObject CameraManagerPack(CameraManager* cm) {
-    GameObject go = GameObjectCreate(cm);
+    GameObject go = GameObjectCreate(cm, "Camera Manager");
     go.Update = CameraManagerUpdate;
     go.DrawUi = CameraManagerDrawUi;
     go.Free = CameraManagerFree;
@@ -1858,14 +1838,20 @@ void ModelInstanceDraw3d(void* _mi) {
     DrawModel(mi->model, mi->position, mi->scale, mi->tint);
 }
 GameObject ModelInstancePack(ModelInstance* mi) {
-    GameObject go = GameObjectCreate(mi);
+    GameObject go = GameObjectCreate(mi, "Model Instance");
     go.Draw3d = ModelInstanceDraw3d;
     return go;
 }
 
-GameObject GameObjectCreate(void* data) {
+GameObject GameObjectCreate(void* data, const char* name) {
     GameObject go = {};
     go.data = data;
+    i32 nameLength = strlen(name);
+    go.name = MemoryReserve<char>(nameLength);
+    char* objNamePtr = (char*)go.name;
+    strcpy(objNamePtr, name);
+    go.id = global::gameObjectIdCounter;
+    global::gameObjectIdCounter++;
     return go;
 }
 
