@@ -354,32 +354,11 @@ struct BillboardParticleSystem {
 };
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera);
 
-struct HeightmapGenerationInfoBackup {
-    Image *heightmapImage;
-    Texture *terrainMapTexture;
-    Texture *terrainTexture;
-    v3 position;
-    v3 size;
-    u32 resdiv;
-};
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
     v3 position;
     v3 size;
     u32 resdiv;
-};
-struct HeightmapBackup {
-    Model model;
-    Image heightmap;
-    Texture2D texture;
-    v3 position;
-    v3 size;
-    u32 heightDataResolution;
-    u32 heightDataWidth;
-    u32 heightDataHeight;
-    float *heightData;
-    Model debugModel;
-    u32 width;
 };
 struct Heightmap {
     v3 position;
@@ -417,6 +396,8 @@ struct Cab {
     mat4 _transform;
     float _turnAngle;
     float _heightPrev;
+
+    bool meshVisible[10];
 };
 void CabInit(Cab* cab);
 void CabUpdate(void* cab);
@@ -618,12 +599,14 @@ namespace global {
         MODEL_CAB,
         MODEL_TREE,
         MODEL_LEVEL0,
+        MODEL_LEVEL1,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "taxi.glb",
         "tree.glb",
-        "level0.glb"
+        "level0.glb",
+        "level1.glb"
     };
     Model models[MODEL_COUNT];
 
@@ -641,11 +624,15 @@ namespace global {
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
         IMAGE_HEIGHTMAP_LEVEL0,
+        IMAGE_HEIGHTMAP_LEVEL1,
+        IMAGE_TERRAINMAP_LEVEL1,
         IMAGE_COUNT
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
-        "heightmap_level0.png"
+        "heightmap_level0.png",
+        "heightmap_level1.png",
+        "terrainmap_level1.png"
     };
     Image images[IMAGE_COUNT];
 
@@ -1633,7 +1620,7 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
 void CabInit(Cab *cab) {
     cab->model = global::models[global::MODEL_CAB];
     cab->frontSeatPosition = {-0.16f, 1.85f, -0.44f};
-    cab->verticalOffset = -1.6f;
+    cab->verticalOffset = -0.f;
     cab->direction = {1.f, 0.f, 0.f};
     cab->maxVelocity = 0.4f;
     cab->acceleration = 0.01f;
@@ -1687,11 +1674,12 @@ void CabUpdate(void* _cab) {
     v2 horizontalVelocity = Vector2Normalize({horizontalDirection.x, horizontalDirection.z}) * stepSpeed;
     cab->position.x += horizontalVelocity.x;
     cab->position.z += horizontalVelocity.y;
+    
+    Heightmap* hm = (Heightmap*)global::groups["terrainHeightmap"];
     v3 positionBehind = v3{
             cab->position.x - horizontalDirection.x,
             0.f,
             cab->position.z - horizontalDirection.z};
-    Heightmap* hm = (Heightmap*)global::groups["terrainHeightmap"];
     if (hm != nullptr) {
         positionBehind.y = HeightmapSampleHeight(hm, positionBehind.x, positionBehind.z) + cab->verticalOffset;
         cab->position.y = HeightmapSampleHeight(hm, cab->position.x, cab->position.z) + cab->verticalOffset;
@@ -1700,7 +1688,7 @@ void CabUpdate(void* _cab) {
     float inclineAngle = atan2f(incline, 1.f);
     cab->rotation.y = inclineAngle;
     mat4 pitchRotationMatrix = MatrixRotatePitch(cab->rotation.y);
-    
+
     cab->direction = {1.f, 0.f, 0.f};
     cab->direction = cab->direction * pitchRotationMatrix;
     cab->direction = cab->direction * yawRotationMatrix;
@@ -1713,7 +1701,9 @@ void CabUpdate(void* _cab) {
 void CabDraw3d(void* _cab) {
     Cab* cab = (Cab*)_cab;
     for (i32 i = 0; i < cab->model.meshCount; i++) {
-        DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], cab->_transform);
+        if (cab->meshVisible[i]) {
+            DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], cab->_transform);
+        }
     }
 }
 void CabDrawImGui(void* _cab) {
@@ -1722,6 +1712,10 @@ void CabDrawImGui(void* _cab) {
     ImGui::DragFloat3("Rotation", (float*)&cab->rotation, 0.05f);
     ImGui::DragFloat3("Direction", (float*)&cab->direction, 0.05f);
     ImGui::DragFloat3("Front seat", (float*)&cab->frontSeatPosition, 0.01f);
+    ImGui::DragFloat("Vertical offset", (float*)&cab->verticalOffset, 0.01f);
+    for (i32 i = 0; i < cab->model.meshCount; i++) {
+        ImGui::Checkbox(TextFormat("%i", i), (bool*)&cab->meshVisible[i]);
+    }
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->frontSeatPosition * cab->_transform;
@@ -2355,7 +2349,7 @@ i32 SceneSetup01(GameObject* goOut) {
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
     ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = global::models[global::MODEL_LEVEL0];
+    mi->model = global::models[global::MODEL_LEVEL1];
     mi->position = {0.f, 0.f, 0.f};
     mi->scale = 1.f;
     mi->tint = WHITE;
@@ -2363,7 +2357,7 @@ i32 SceneSetup01(GameObject* goOut) {
 
     BoundingBox bb = GenBoundingBoxMesh(mi->model.meshes[0]);
     HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP_LEVEL0];
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP_LEVEL1];
     hgi.position = bb.min;
     hgi.size = bb.max - bb.min;
     hgi.resdiv = 2;
