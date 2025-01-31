@@ -104,10 +104,11 @@ struct GameObject {
     void (*Free) (void*);
     void (*DrawImGui) (void*);
     void* data;
-    const char* name;
+    const char* objectName;
+    const char* instanceName;
     u32 id;
 };
-GameObject GameObjectCreate(void* data, const char* name);
+GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName = "<unnamed>");
 
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
 enum EVENT_HANDLER_EVENTS {
@@ -195,7 +196,7 @@ void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
 void TypewriterEvent_LineComplete(Typewriter* tw);
 void TypewriterStart(Typewriter* tw, String* str, i32 strCount);
-GameObject TypewriterPack(Typewriter* tw);
+GameObject TypewriterPack(Typewriter* tw, const char* instanceName = "<unnamed>");
 // TODO: Encapsulate this functionality in a signal processing structure
 
 void _TypewriterAdvanceText(Typewriter *tw);
@@ -218,7 +219,7 @@ void DialogueOptionsInit(DialogueOptions* dopt);
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
 void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
-GameObject DialogueOptionsPack(DialogueOptions* dopt);
+GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName = "<unnamed>");
 
 struct DialogueSequence {
     Typewriter typewriter;
@@ -230,9 +231,8 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDrawUi(void* _dseq);
-void DialogueSequencePack(void* _dseq);
 void DialogueSequenceFree(void* _dseq);
-GameObject DialogueSequencePack(DialogueSequence* _dseq);
+GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName = "<unnamed>");
 void DialogueSequenceStartSection(i32 ind);
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
@@ -324,7 +324,7 @@ struct InstanceMeshRenderDataBlocks {
 InstanceMeshRenderData ForestCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 InstanceMeshRenderData ForestCreateBlocks(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 void ForestDraw3d(void* _imrd);
-GameObject ForestPack(InstanceMeshRenderData* forest);
+GameObject ForestPack(InstanceMeshRenderData* forest, const char* instanceName);
 
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // https://www.desmos.com/calculator/scz7zhonfw
@@ -346,7 +346,7 @@ void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material
 void ParticleSystemFree(void* psys);
 void ParticleSystemUpdate(void* psys);
 void ParticleSystemDraw3d(void* psys);
-GameObject ParticleSystemPack(ParticleSystem *psys);
+GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName = "<unnamed>"), instanceName;
 
 struct BillboardParticle {
     v3 position;
@@ -369,32 +369,11 @@ struct BillboardParticleSystem {
 };
 void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera);
 
-struct HeightmapGenerationInfoBackup {
-    Image *heightmapImage;
-    Texture *terrainMapTexture;
-    Texture *terrainTexture;
-    v3 position;
-    v3 size;
-    u32 resdiv;
-};
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
     v3 position;
     v3 size;
     u32 resdiv;
-};
-struct HeightmapBackup {
-    Model model;
-    Image heightmap;
-    Texture2D texture;
-    v3 position;
-    v3 size;
-    u32 heightDataResolution;
-    u32 heightDataWidth;
-    u32 heightDataHeight;
-    float *heightData;
-    Model debugModel;
-    u32 width;
 };
 struct Heightmap {
     v3 position;
@@ -411,9 +390,11 @@ void HeightmapFree(Heightmap* hm);
 struct Cab {
     Model model;
     v3 position;
-    v3 frontSeat;
+    v3 rotation;
+    v3 frontSeatPosition;
     v3 direction;
     v3 velocity;
+    float verticalOffset; // TODO: Temporary fix. Fix heightmaps to accomodate this
     float maxVelocity;
     float acceleration;
     float neutralDeceleration;
@@ -425,17 +406,20 @@ struct Cab {
     QuadraticBezier accelerationCurve;
     QuadraticBezier reverseAccelerationCurve;
 
+    float _behindCheck;
     float _speed;
     mat4 _transform;
     float _turnAngle;
     float _heightPrev;
+
+    bool meshVisible[10];
 };
 void CabInit(Cab* cab);
 void CabUpdate(void* cab);
 void CabDraw3d(void* cab);
 void CabDrawImGui(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
-GameObject CabPack(Cab* cab);
+GameObject CabPack(Cab* cab, const char* instanceName = "<unnamed>");
 
 struct Skybox {
     Model model;
@@ -453,7 +437,7 @@ struct CameraManager {
 void CameraManagerInit(CameraManager* camMan, Camera playerCamera);
 void CameraManagerUpdate(void* _camMan);
 void CameraManagerDrawUi(void* _camMan);
-GameObject CameraManagerPack(CameraManager* camMan);
+GameObject CameraManagerPack(CameraManager* camMan, const char* instanceName = "<unnamed>");
 
 void CameraUpdateDebug(Camera* camera, float speed);
 void CameraUpdateCab(Camera* camera, Cab* cab);
@@ -469,7 +453,8 @@ struct ModelInstance {
     Color tint;
 };
 void ModelInstanceDraw3d(void* _mi);
-GameObject ModelInstancePack(ModelInstance* mi);
+void ModelInstanceDrawImGui(void* _mi);
+GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName = "<unnamed>");
 
 struct Collider {
     rect2 rect;
@@ -570,6 +555,14 @@ float GetClosestWrappedF(float from, float to, float bounds_min, float bounds_ma
     float c = (to - dist) - from;
     float result = fabs(a) < fabs(b) ? a : b;
     return fabs(c) < fabs(result) ? c + from : result + from;
+}
+
+const char* CstringDuplicate(const char* cstr) {
+    i32 len = strlen(cstr);
+    char* cstrNew = MemoryReserve<char>(len + 1);
+    strcpy(cstrNew, cstr);
+    cstrNew[len] = '\0';
+    return cstrNew;
 }
 
 u32 Fnv32Buf(void* buf, u64 len, u32 hval) {
@@ -686,12 +679,14 @@ namespace global {
         MODEL_CAB,
         MODEL_TREE,
         MODEL_LEVEL0,
+        MODEL_LEVEL1,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
-        "cab.glb",
+        "taxi.glb",
         "tree.glb",
-        "level0.glb"
+        "level0.glb",
+        "level1.glb"
     };
     Model models[MODEL_COUNT];
 
@@ -709,11 +704,15 @@ namespace global {
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
         IMAGE_HEIGHTMAP_LEVEL0,
+        IMAGE_HEIGHTMAP_LEVEL1,
+        IMAGE_TERRAINMAP_LEVEL1,
         IMAGE_COUNT
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
-        "heightmap_level0.png"
+        "heightmap_level0.png",
+        "heightmap_level1.png",
+        "terrainmap_level1.png"
     };
     Image images[IMAGE_COUNT];
 
@@ -1041,7 +1040,7 @@ void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].DrawImGui != nullptr) {
-            if (ImGui::CollapsingHeader(TextFormat("%s (%i)", gameObjects[i].name, gameObjects[i].id))) {
+            if (ImGui::CollapsingHeader(TextFormat("%s - %s (%i)", gameObjects[i].objectName, gameObjects[i].instanceName, gameObjects[i].id))) {
                 gameObjects[i].DrawImGui(gameObjects[i].data);
             }
         }
@@ -1062,6 +1061,7 @@ void MemoryPoolDestroy(MemoryPool* mm) {
 }
 void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
     assert(mm->location + size < mm->size); // Out of memory check
+    assert(size > 0);
     void* reserve = (byte*)mm->buffer + mm->location;
     mm->location += size;
     if (mm->location % sizeof(void*) != 0) {
@@ -1193,8 +1193,8 @@ void TypewriterDraw(void* _tw) {
     DrawTextPro(style->font, substr.cstr, {truncf((float)tw->x), truncf((float)tw->y)}, textAlign, 0.f, style->size, 1.f, WHITE);
     StringDestroy(substr);
 }
-GameObject TypewriterPack(Typewriter* tw) {
-    GameObject go = GameObjectCreate(tw, "Typewriter");
+GameObject TypewriterPack(Typewriter* tw, const char* instanceName) {
+    GameObject go = GameObjectCreate(tw, "Typewriter", instanceName);
     go.Update = TypewriterUpdate;
     go.DrawUi = TypewriterDraw;
     return go;
@@ -1300,8 +1300,8 @@ void DialogueOptionsDraw(void* _dopt) {
     }
     free(textSize);
 }
-GameObject DialogueOptionsPack(DialogueOptions* dopt) {
-    GameObject go = {};
+GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName) {
+    GameObject go = GameObjectCreate(dopt, "Dialogue Options", instanceName);
     go.data = dopt;
     go.Update = DialogueOptionsUpdate;
     go.DrawUi = DialogueOptionsDraw;
@@ -1388,8 +1388,8 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     ListInit(dss->link, 50);
     return dss;
 }
-GameObject DialogueSequencePack(DialogueSequence* dseq) {
-    GameObject go = GameObjectCreate(dseq, "Dialogue Sequence");
+GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName) {
+    GameObject go = GameObjectCreate(dseq, "Dialogue Sequence", instanceName);
     go.data = dseq;
     go.Update = DialogueSequenceUpdate;
     go.DrawUi = DialogueSequenceDrawUi;
@@ -1584,8 +1584,8 @@ void ForestDraw3d(void* _imrd) {
     InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
     DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
 }
-GameObject ForestPack(InstanceMeshRenderData* forest) {
-    GameObject go = GameObjectCreate(forest, "Forest Manager");
+GameObject ForestPack(InstanceMeshRenderData* forest, const char* instanceName = "<unnamed>") {
+    GameObject go = GameObjectCreate(forest, "Forest Manager", instanceName);
     go.Draw3d = ForestDraw3d;
     return go;
 }
@@ -1620,8 +1620,8 @@ void ParticleSystemDraw3d(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
 }
-GameObject ParticleSystemPack(ParticleSystem *psys) {
-    GameObject go = GameObjectCreate(psys, "Particle System");
+GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName) {
+    GameObject go = GameObjectCreate(psys, "Particle System", instanceName);
     go.Update = ParticleSystemUpdate;
     go.Draw3d = ParticleSystemDraw3d;
     go.Free = ParticleSystemFree;
@@ -1699,7 +1699,8 @@ void BillboardParticleSystemStep(BillboardParticleSystem *psys, Camera3D camera)
 
 void CabInit(Cab *cab) {
     cab->model = global::models[global::MODEL_CAB];
-    cab->frontSeat = {-0.13f, 1.65f, -0.44f};
+    cab->frontSeatPosition = {-0.16f, 1.85f, -0.44f};
+    cab->verticalOffset = -0.f;
     cab->direction = {1.f, 0.f, 0.f};
     cab->maxVelocity = 0.4f;
     cab->acceleration = 0.01f;
@@ -1745,44 +1746,62 @@ void CabUpdate(void* _cab) {
     } else {
         cab->_turnAngle = ApproachZero(cab->_turnAngle, cab->turnNeutralReturn * FRAME_TIME);
     }
-    cab->yawRotationStep = cab->_turnAngle * DEG2RAD * stepSpeed;
-    mat4 yawRotationMatrix = MatrixRotateYaw(cab->yawRotationStep);
-    cab->_transform *= yawRotationMatrix;
+    cab->rotation.x += cab->_turnAngle * DEG2RAD * stepSpeed;
+    mat4 yawRotationMatrix = MatrixRotateYaw(cab->rotation.x);
 
     // TODO: Inefficient matrix multiplication
-    cab->direction = cab->direction * yawRotationMatrix;
-    v2 horizontalVelocity = Vector2Normalize({cab->direction.x, cab->direction.z}) * stepSpeed;
+    v3 horizontalDirection = v3{1.f, 0.f, 0.f} * yawRotationMatrix;
+    v2 horizontalVelocity = Vector2Normalize({horizontalDirection.x, horizontalDirection.z}) * stepSpeed;
     cab->position.x += horizontalVelocity.x;
     cab->position.z += horizontalVelocity.y;
+    
     Heightmap* hm = (Heightmap*)global::groups["terrainHeightmap"];
-    if (hm != nullptr) {
-        v3 positionBehind = v3{
-            cab->position.x - cab->direction.x * 0.05f,
+    v3 positionBehind = v3{
+            cab->position.x - horizontalDirection.x,
             0.f,
-            cab->position.z - cab->direction.z * 0.05f};
-        positionBehind.y = HeightmapSampleHeight(hm, positionBehind.x, positionBehind.z);
-        cab->position.y = HeightmapSampleHeight(hm, cab->position.x, cab->position.z);
-
-
+            cab->position.z - horizontalDirection.z};
+    if (hm != nullptr) {
+        positionBehind.y = HeightmapSampleHeight(hm, positionBehind.x, positionBehind.z) + cab->verticalOffset;
+        cab->position.y = HeightmapSampleHeight(hm, cab->position.x, cab->position.z) + cab->verticalOffset;
     }
-    float incline = cab->position.y - cab->_heightPrev;
+    float incline = cab->position.y - positionBehind.y;
+    float inclineAngle = atan2f(incline, 1.f);
+    cab->rotation.y = inclineAngle;
+    mat4 pitchRotationMatrix = MatrixRotatePitch(cab->rotation.y);
+
+    cab->direction = {1.f, 0.f, 0.f};
+    cab->direction = cab->direction * pitchRotationMatrix;
+    cab->direction = cab->direction * yawRotationMatrix;
+
+    cab->_transform = MatrixIdentity();
+    cab->_transform *= pitchRotationMatrix;
+    cab->_transform *= yawRotationMatrix;
+    cab->_transform *= MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
 }
 void CabDraw3d(void* _cab) {
     Cab* cab = (Cab*)_cab;
-    mat4 transform = cab->_transform * MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
     for (i32 i = 0; i < cab->model.meshCount; i++) {
-        DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], transform);
+        if (cab->meshVisible[i]) {
+            DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], cab->_transform);
+        }
     }
 }
 void CabDrawImGui(void* _cab) {
     Cab* cab = (Cab*)_cab;
-    ImGui::DragFloat3("Position", (float*)&cab->position);
+    ImGui::DragFloat3("Position", (float*)&cab->position, 0.05f);
+    ImGui::DragFloat3("Rotation", (float*)&cab->rotation, 0.05f);
+    ImGui::DragFloat3("Direction", (float*)&cab->direction, 0.05f);
+    ImGui::DragFloat3("Front seat", (float*)&cab->frontSeatPosition, 0.01f);
+    ImGui::DragFloat("Vertical offset", (float*)&cab->verticalOffset, 0.01f);
+    for (i32 i = 0; i < cab->model.meshCount; i++) {
+        ImGui::Checkbox(TextFormat("%i", i), (bool*)&cab->meshVisible[i]);
+    }
 }
 v3 CabGetFrontSeatPosition(Cab *cab) {
-    return cab->position + cab->frontSeat * cab->_transform;
+    return cab->frontSeatPosition * cab->_transform;
 }
-GameObject CabPack(Cab *cab) {
-    GameObject go = GameObjectCreate(cab, "Cab");
+GameObject CabPack(Cab* cab, const char* instanceName) {
+    GameObject go = GameObjectCreate(cab, "Cab", instanceName);
     go.Update = CabUpdate;
     go.Draw3d = CabDraw3d;
     go.DrawImGui = CabDrawImGui;
@@ -1849,8 +1868,8 @@ void CameraManagerFree(void* _camMan) {
         global::currentCamera = nullptr;
     }
 }
-GameObject CameraManagerPack(CameraManager* cm) {
-    GameObject go = GameObjectCreate(cm, "Camera Manager");
+GameObject CameraManagerPack(CameraManager* cm, const char* instanceName) {
+    GameObject go = GameObjectCreate(cm, "Camera Manager", instanceName);
     go.Update = CameraManagerUpdate;
     go.DrawUi = CameraManagerDrawUi;
     go.Free = CameraManagerFree;
@@ -1858,13 +1877,8 @@ GameObject CameraManagerPack(CameraManager* cm) {
 }
 void CameraUpdateCab(Camera* camera, Cab* cab) {
     v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
-    float turnAngleNorm = cab->_turnAngle / cab->turnAngleMax;
-    float cabAngle = atan2f(cab->direction.x, cab->direction.z);
-    //v2 directionTilted = Vector2FromAngle(cabAngle + turnAngleNorm * DEG2RAD * 20.f - PI / 2.f);
-    //v3 direction = {directionTilted.x, 0.f, directionTilted.y};
     camera->position = frontSeatPosition;
-    //camera->target = frontSeatPosition + direction;
-    camera->target = frontSeatPosition + cab->direction;
+    camera->target = camera->position + cab->direction;
 }
 void CameraUpdateDebug(Camera* camera, float speed) {
     if (debug::cursorEnabled) {
@@ -1917,9 +1931,15 @@ void ModelInstanceDraw3d(void* _mi) {
     ModelInstance *mi = (ModelInstance*)_mi;
     DrawModel(mi->model, mi->position, mi->scale, mi->tint);
 }
-GameObject ModelInstancePack(ModelInstance* mi) {
-    GameObject go = GameObjectCreate(mi, "Model Instance");
+void ModelInstanceDrawImGui(void* _mi) {
+    ModelInstance* mi = (ModelInstance*)_mi;
+    ImGui::DragFloat3("Position", (float*)&mi->position, 0.05f);
+    ImGui::DragFloat("Scale", (float*)&mi->scale, 0.05f);
+}
+GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName) {
+    GameObject go = GameObjectCreate(mi, "Model Instance", instanceName);
     go.Draw3d = ModelInstanceDraw3d;
+    go.DrawImGui = ModelInstanceDrawImGui;
     return go;
 }
 
@@ -2198,13 +2218,11 @@ std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 
     return polygon;
 }
 
-GameObject GameObjectCreate(void* data, const char* name) {
+GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName) {
     GameObject go = {};
     go.data = data;
-    i32 nameLength = strlen(name);
-    go.name = MemoryReserve<char>(nameLength);
-    char* objNamePtr = (char*)go.name;
-    strcpy(objNamePtr, name);
+    go.objectName = CstringDuplicate(objectName);
+    go.instanceName = CstringDuplicate(instanceName);
     go.id = global::gameObjectIdCounter;
     global::gameObjectIdCounter++;
     return go;
@@ -2686,15 +2704,15 @@ i32 SceneSetup01(GameObject* goOut) {
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
     ModelInstance* mi = MemoryReserve<ModelInstance>();
-    mi->model = global::models[global::MODEL_LEVEL0];
+    mi->model = global::models[global::MODEL_LEVEL1];
     mi->position = {0.f, 0.f, 0.f};
     mi->scale = 1.f;
     mi->tint = WHITE;
-    goOut[goCount] = ModelInstancePack(mi); goCount++;
+    goOut[goCount] = ModelInstancePack(mi, "Terrain"); goCount++;
 
     BoundingBox bb = GenBoundingBoxMesh(mi->model.meshes[0]);
     HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP_LEVEL0];
+    hgi.heightmapImage = &global::images[global::IMAGE_HEIGHTMAP_LEVEL1];
     hgi.position = bb.min;
     hgi.size = bb.max - bb.min;
     hgi.resdiv = 2;
