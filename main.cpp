@@ -64,6 +64,21 @@ typedef Vector2 v2;
 
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances);
 
+struct mat2 {
+    float x1, x2, y1, y2;
+};
+inline mat2 Matrix2Rotate(float ang) {
+    return mat2{cosf(ang), -sinf(ang), sinf(ang), cosf(ang)};
+}
+inline mat2 Matrix2Scale(mat2 mat, float scalar) {
+    return mat2{mat.x1 * scalar, mat.x2 * scalar, mat.y1 * scalar, mat.y2 * scalar};
+}
+inline mat2 Matrix2Invert(mat2 mat) {
+    float scalar = 1.f / (mat.x1 * mat.y2 - mat.x2 * mat.y1);
+    mat2 m = mat2{mat.y2, -mat.x2, -mat.y1, mat.x1};
+    return Matrix2Scale(m, scalar);
+}
+
 // TODO: Create a global memory pool that systems can take advantage of globally
 struct MemoryPool {
     void* buffer;
@@ -456,7 +471,60 @@ struct ModelInstance {
 void ModelInstanceDraw3d(void* _mi);
 GameObject ModelInstancePack(ModelInstance* mi);
 
-inline i32 PointInRectangle(v2 begin, v2 end, v2 pt) {return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;}
+struct Collider {
+    rect2 rect;
+    float angle;
+    rect2 _bounds;
+    mat2 _rotmat;
+    mat2 _rotmatInverse;
+    float _diagonalLength;
+};
+void ColliderSetAngle(Collider* collider, float angle);
+void ColliderSetRect(Collider* collider, rect2 rect);
+Collider ColliderCreate(rect2 rect, float angle);
+Collider ColliderCreateFromLine(v2 a, v2 b, float width);
+v2 ColliderGetMiddle(Collider* collider);
+void ColliderDraw(Collider* collider, Color color);
+struct CollisionInformation {
+    bool collided;
+    v2 pushoutPosition;
+};
+v2 ColliderGetPushoutDir(Collider* collider);
+CollisionInformation ColliderPointCollision(Collider* collider, v2 point);
+
+struct MarchingSquaresResult {
+    u8* data;
+    i32 width;
+    i32 height;
+};
+enum MARCHING_SQUARES_NORMAL {
+    MARCHING_SQUARES_NORMAL_RIGHT,
+    MARCHING_SQUARES_NORMAL_RIGHT_UP,
+    MARCHING_SQUARES_NORMAL_UP,
+    MARCHING_SQUARES_NORMAL_LEFT_UP,
+    MARCHING_SQUARES_NORMAL_LEFT,
+    MARCHING_SQUARES_NORMAL_LEFT_DOWN,
+    MARCHING_SQUARES_NORMAL_DOWN,
+    MARCHING_SQUARES_NORMAL_RIGHT_DOWN,
+    MARCHING_SQUARES_NORMAL_NONE
+};
+enum MARCHING_SQUARES_DIRECTION {
+    MARCHING_SQUARES_DIRECTION_RIGHT,
+    MARCHING_SQUARES_DIRECTION_UP,
+    MARCHING_SQUARES_DIRECTION_LEFT,
+    MARCHING_SQUARES_DIRECTION_DOWN,
+    MARCHING_SQUARES_DIRECTION_NONE
+};
+u8 MarchingSquaresGetData(MarchingSquaresResult* msr, i32 x, i32 y);
+u8 MarchingSquaresGetMarchingBit(MarchingSquaresResult* msr, i32 x, i32 y);
+u8 MarchingSquaresSetMarchingBit(MarchingSquaresResult* msr, i32 x, i32 y, bool val);
+MarchingSquaresResult MarchingSquaresImage(Image* image);
+void MarchingSquaresDataDraw(Texture texture, v2 frameSize, MarchingSquaresResult* msr);
+void MarchingSquaresDataFree(MarchingSquaresResult* msr);
+i32 MarchingSquaresGetDataDirection(u8 data, i32 dirPrev);
+i32 MarchingSquaresGetDataNormal(u8 data, i32 dirPrev);
+std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 x, i32 y);
+
 inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
 inline void DrawTextShadow(const char* text, i32 x, i32 y, i32 fontSize, Color col, Color shadowCol) {
     DrawText(text, x + 1, y + 1, fontSize, shadowCol);
@@ -474,9 +542,21 @@ inline i32 iwrapi(i32 val, i32 min, i32 max) {
 inline float ffractf(float val) {return val - floorf(val);}
 inline float fclampf(float val, float min, float max) {return fminf(fmaxf(val, min), max);}
 inline float fsignf(float val) {return (float)(!signbit(val)) * 2.f - 1.f;}
+inline float ApproachZero(float val, float amount) {return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);}
 inline v2 Vector2Fract(v2 v) {return {ffractf(v.x), ffractf(v.y)};}
 inline v2 Vector2FromAngle(float ang) {return {cos(ang), -sin(ang)};}
-inline float ApproachZero(float val, float amount) {return fmaxf(fabsf(val) - amount, 0.f) * fsignf(val);}
+inline v2 Vector2Transform(v2 v, mat2 mat) {
+    return {
+        v.x * mat.x1 + v.y * mat.y1,
+        v.x * mat.x2 + v.y * mat.y2};
+}
+inline bool PointInRectangle(rect2 rect, v2 p) {
+    v2 br = {rect.x + rect.width, rect.y + rect.height};
+    return p.x >= rect.x && p.x < br.x && p.y >= rect.y && p.y < br.y;
+}
+inline bool PointInRectangle(v2 begin, v2 end, v2 pt) {
+    return pt.x >= begin.x && pt.x < end.x && pt.y >= begin.y && pt.y < end.y;
+}
 // NOTE: only supports up to 3 decimals
 
 inline float GetRandomValueF(float min, float max) {
@@ -1841,6 +1921,281 @@ GameObject ModelInstancePack(ModelInstance* mi) {
     GameObject go = GameObjectCreate(mi, "Model Instance");
     go.Draw3d = ModelInstanceDraw3d;
     return go;
+}
+
+void ColliderSetAngle(Collider* collider, float angle) {
+    collider->angle = angle;
+    collider->_rotmat = Matrix2Rotate(angle);
+    collider->_rotmatInverse = Matrix2Invert(collider->_rotmat);
+}
+void ColliderSetRect(Collider* collider, rect2 rect) {
+    collider->rect = rect;
+    float diagonalLength = sqrtf(rect.width * rect.width + rect.height * rect.height);
+    v2 middle = {collider->rect.x + collider->rect.width / 2.f, collider->rect.y + collider->rect.height / 2.f};
+    collider->_bounds = rect2{middle.x - diagonalLength / 2.f, middle.y - diagonalLength / 2.f, diagonalLength, diagonalLength};
+}
+Collider ColliderCreate(rect2 rect, float angle) {
+    Collider collider;
+    ColliderSetRect(&collider, rect);
+    ColliderSetAngle(&collider, angle);
+    return collider;
+}
+Collider ColliderCreateFromLine(v2 a, v2 b, float width) {
+    float angle = atan2(b.y - a.y, b.x - a.x);
+    float length = Vector2Distance(a, b);
+    v2 colliderSize = {length, width};
+    v2 colliderPosition = Vector2Lerp(a, b, 0.5) - colliderSize / 2.f;
+    rect2 colliderRect = {colliderPosition.x, colliderPosition.y, colliderSize.x, colliderSize.y};
+    return ColliderCreate(colliderRect, -angle);
+}
+v2 ColliderGetMiddle(Collider* collider) {
+    return v2{collider->rect.x, collider->rect.y} + v2{collider->rect.width, collider->rect.height} / 2.f;
+}
+void ColliderDraw(Collider* collider, Color color) {
+    v2 middle = ColliderGetMiddle(collider);
+    v2 topLeft = Vector2Transform(
+        v2{collider->rect.x, collider->rect.y} - middle,
+        collider->_rotmat);
+    v2 topRight = Vector2Transform(
+        v2{collider->rect.x + collider->rect.width, collider->rect.y} - middle,
+        collider->_rotmat);
+    v2 bottomRight = Vector2Transform(
+        v2{collider->rect.x, collider->rect.y} + v2{collider->rect.width, collider->rect.height} - middle,
+        collider->_rotmat);
+    v2 bottomLeft = Vector2Transform(
+        v2{collider->rect.x, collider->rect.y + collider->rect.height} - middle,
+        collider->_rotmat);
+    v2 pts[4] = {topLeft, topRight, bottomRight, bottomLeft};
+    for (i32 i = 0; i < 4; i++) {
+        DrawLineV(pts[i] + middle, pts[(i+1)%4] + middle, color);
+    }
+    u8 a = (u8)color.a / 2;
+    v2 arrowTail = {0.f, -8.f};
+    v2 arrowTip = {0.f, 8.f};
+    v2 arrowEndTop = arrowTip + v2{-4.f, -4.f};
+    v2 arrowEndBottom = arrowTip + v2{4.f, -4.f};
+    arrowTail = Vector2Transform(arrowTail, collider->_rotmat) + middle;
+    arrowTip = Vector2Transform(arrowTip, collider->_rotmat) + middle;
+    arrowEndTop = Vector2Transform(arrowEndTop, collider->_rotmat) + middle;
+    arrowEndBottom = Vector2Transform(arrowEndBottom, collider->_rotmat) + middle;
+    DrawLineV(arrowTail, arrowTip, color);
+    DrawLineV(arrowTip, arrowEndTop, color);
+    DrawLineV(arrowTip, arrowEndBottom, color);
+}
+v2 ColliderGetPushoutDir(Collider* collider) {
+    return Vector2Transform(v2{0.f, 1.f}, collider->_rotmat);
+}
+CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
+    CollisionInformation ci;
+    if (PointInRectangle(collider->_bounds, point)) {
+        v2 middle = ColliderGetMiddle(collider);
+        v2 pointRotated = Vector2Transform(point - middle, collider->_rotmatInverse);
+        ci.collided = PointInRectangle(collider->rect, pointRotated + middle);
+        ci.pushoutPosition = Vector2Transform(v2{pointRotated.x, collider->rect.y - middle.y}, collider->_rotmat) + middle;
+        return ci;
+    }
+    ci.collided = false;
+    ci.pushoutPosition = point;
+    return ci;
+}
+
+u8 MarchingSquaresGetData(MarchingSquaresResult* msr, i32 x, i32 y) {
+    u8 data = msr->data[x + y * msr->width];
+    return data & 15;
+}
+u8 MarchingSquaresGetMarchingBit(MarchingSquaresResult* msr, i32 x, i32 y) {
+    return (msr->data[x + y * msr->width]) & 0b00010000;
+}
+u8 MarchingSquaresSetMarchingBit(MarchingSquaresResult* msr, i32 x, i32 y, bool val) {
+    return ((msr->data[x + y * msr->width]) & 0b00010000) | ((u8)val << 4);
+}
+MarchingSquaresResult MarchingSquaresImage(Image* image) {
+    MarchingSquaresResult msr = {};
+    msr.width = image->width - 1;
+    msr.height = image->height - 1;
+    msr.data = (u8*)calloc(msr.width * msr.height, sizeof(u8));
+    u8* imageData = (u8*)image->data;
+    i32 stride = PixelformatGetStride(image->format);
+    for (i32 x = 0; x < image->width - 1; x++) {
+        for (i32 y = 0; y < image->height - 1; y++) {
+            i32 itl = x + y * image->width;
+            i32 itr = (x + 1) + y * image->width;
+            i32 ibl = x + (y + 1) * image->height;
+            i32 ibr = (x + 1) + (y + 1) * image->width;
+            u8 tl = imageData[itl * stride + stride - 1] == 0;
+            u8 tr = imageData[itr * stride + stride - 1] == 0;
+            u8 bl = imageData[ibl * stride + stride - 1] == 0;
+            u8 br = imageData[ibr * stride + stride - 1] == 0;
+            msr.data[x + y * msr.width] = bl | (br << 1) | (tr << 2) | (tl << 3);
+        }
+    }
+    return msr;
+}
+void MarchingSquaresDataDraw(Texture texture, v2 frameSize, MarchingSquaresResult* msr) {
+    for (i32 x = 0; x < msr->width; x++) {
+        for (i32 y = 0; y < msr->height; y++) {
+            u8 index = msr->data[x + y * msr->width];
+            rect2 srcRect = {frameSize.x * (i32)index, 0, frameSize.x, frameSize.y};
+            v2 position = {x * frameSize.x, y * frameSize.y};
+            Color transparentWhite = {255, 255, 255, 128};
+            DrawTextureRec(texture, srcRect, position, WHITE);
+            DrawLineV(position, {position.x + frameSize.x, position.y}, transparentWhite);
+            DrawLineV(position, {position.x, position.y + frameSize.y}, transparentWhite);
+            DrawText(TextFormat("%u", index), position.x, position.y, 12, transparentWhite);
+        }
+    }
+}
+void MarchingSquaresDataFree(MarchingSquaresResult* msr) {
+    free(msr->data);
+    msr->data = nullptr;
+    msr->width = 0;
+    msr->height = 0;
+}
+i32 MarchingSquaresGetDataDirection(u8 data, i32 dirPrev) {
+    switch (data) {
+        case 2: // >
+        case 3:
+        case 11:
+            return MARCHING_SQUARES_DIRECTION_RIGHT;
+        case 4: // ^
+        case 6:
+        case 7:
+            return MARCHING_SQUARES_DIRECTION_UP;
+        case 8: // <
+        case 12:
+        case 14:
+            return MARCHING_SQUARES_DIRECTION_LEFT;
+        case 1: // v
+        case 9:
+        case 13:
+            return MARCHING_SQUARES_DIRECTION_DOWN;
+        case 5:
+            if (dirPrev == MARCHING_SQUARES_DIRECTION_RIGHT) {
+                return MARCHING_SQUARES_DIRECTION_UP;
+            } else if (dirPrev == MARCHING_SQUARES_DIRECTION_LEFT) {
+                return MARCHING_SQUARES_DIRECTION_DOWN;
+            } else {
+                const char* msg = TextFormat("MarchingSquaresDataPolygonizeAt: Invalid previous move");
+                TraceLog(LOG_ERROR, msg);
+                return MARCHING_SQUARES_DIRECTION_NONE;
+            }
+            break;
+        case 10:
+            if (dirPrev == MARCHING_SQUARES_DIRECTION_UP) {
+                return MARCHING_SQUARES_DIRECTION_RIGHT;
+            } else if (dirPrev == MARCHING_SQUARES_DIRECTION_DOWN) {
+                return MARCHING_SQUARES_DIRECTION_LEFT;
+            } else {
+                const char* msg = TextFormat("MarchingSquaresDataPolygonizeAt: Invalid previous move");
+                TraceLog(LOG_ERROR, msg);
+                return MARCHING_SQUARES_DIRECTION_NONE;
+            }
+            break;
+        default:
+            TraceLog(LOG_ERROR, "MarchingSquaresDataPolygonizeAt: Invalid marching square data");
+            return MARCHING_SQUARES_DIRECTION_NONE;
+            break;
+    }
+}
+i32 MarchingSquaresGetDataNormal(u8 data, i32 dirPrev) {
+    switch (data) {
+        case 6:
+            return MARCHING_SQUARES_NORMAL_RIGHT;
+        case 4:
+        case 14:
+            return MARCHING_SQUARES_NORMAL_RIGHT_UP;
+        case 12:
+            return MARCHING_SQUARES_NORMAL_UP;
+        case 8:
+        case 13:
+            return MARCHING_SQUARES_NORMAL_LEFT_UP;
+        case 9:
+            return MARCHING_SQUARES_NORMAL_LEFT;
+        case 1:
+        case 11:
+            return MARCHING_SQUARES_NORMAL_LEFT_DOWN;
+        case 3:
+            return MARCHING_SQUARES_NORMAL_DOWN;
+        case 2:
+        case 7:
+            return MARCHING_SQUARES_NORMAL_RIGHT_DOWN;
+        case 5:
+            if (dirPrev == MARCHING_SQUARES_DIRECTION_RIGHT) {
+                return MARCHING_SQUARES_NORMAL_RIGHT_DOWN;
+            } else if (dirPrev == MARCHING_SQUARES_DIRECTION_LEFT) {
+                return MARCHING_SQUARES_NORMAL_LEFT_UP;
+            }
+            return MARCHING_SQUARES_NORMAL_NONE;
+        case 10:
+            if (dirPrev == MARCHING_SQUARES_DIRECTION_DOWN) {
+                return MARCHING_SQUARES_NORMAL_LEFT_DOWN;
+            } else if (dirPrev == MARCHING_SQUARES_DIRECTION_UP) {
+                return MARCHING_SQUARES_NORMAL_RIGHT_UP;
+            }
+            return MARCHING_SQUARES_NORMAL_NONE;
+    }
+    return MARCHING_SQUARES_NORMAL_NONE;
+}
+std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 x, i32 y) {
+    std::vector<v2> polygon;
+    MarchingSquaresSetMarchingBit(msr, x, y, true);
+    u8 firstData = MarchingSquaresGetData(msr, x, y);
+    if (firstData == 0 || firstData == 15) {
+        TraceLog(LOG_ERROR, "MarchingSquaresDataPolygonizeAt: Invalid starting position");
+        return polygon;
+    } else if (firstData == 5 || firstData == 10) {
+        TraceLog(LOG_ERROR, "MarchingSquaresDataPolygonizeAt: Ambiguous starting position");
+        return polygon;
+    }
+    i32 startX = x;
+    i32 startY = y;
+    i32 currentX = x;
+    i32 currentY = y;
+    i32 movePrevX = 0;
+    i32 movePrevY = 0;
+    i32 moveDirPrev = 0;
+    i32 normDirPrev = 0;
+    i32 dirPrevX = 0;
+    i32 dirPrevY = 0;
+#define MARCHING_SQUARES_POLYGONIZE_AT_MAX_ITERATION_COUNT 512
+    i32 iterations = 0;
+    bool error = false;
+    do {
+        u8 data = MarchingSquaresGetData(msr, currentX, currentY);
+        i32 moveDir = MarchingSquaresGetDataDirection(data, moveDirPrev);
+        error |= moveDir == MARCHING_SQUARES_DIRECTION_NONE;
+        i32 normDir = MarchingSquaresGetDataNormal(data, moveDirPrev);
+        error |= normDir == MARCHING_SQUARES_NORMAL_NONE;
+        
+        if (normDir != normDirPrev) {
+            polygon.push_back(v2{(float)currentX - (float)movePrevX / 2.f, (float)currentY - (float)movePrevY / 2.f});
+        }
+        i32 moveX = 0;
+        i32 moveY = 0;
+        switch (moveDir) {
+            case MARCHING_SQUARES_DIRECTION_RIGHT: moveX = 1; break;
+            case MARCHING_SQUARES_DIRECTION_UP: moveY = -1; break;
+            case MARCHING_SQUARES_DIRECTION_LEFT: moveX = -1; break;
+            case MARCHING_SQUARES_DIRECTION_DOWN: moveY = 1; break;
+        }
+        currentX += moveX;
+        currentY += moveY;
+        movePrevX = moveX;
+        movePrevY = moveY;
+        moveDirPrev = moveDir;
+        normDirPrev = normDir;
+        iterations++;
+        MarchingSquaresSetMarchingBit(msr, currentX, currentY, true);
+        
+        if (currentX < 0 || currentX >= msr->width || currentY < 0 || currentY >= msr->height) {
+            break;
+        }
+        if (iterations >= MARCHING_SQUARES_POLYGONIZE_AT_MAX_ITERATION_COUNT) {
+            TraceLog(LOG_WARNING, "MarchingSquaresDataPolygonizeAt: Stopped because max iterations has been reached");
+            break;
+        }
+    } while ((currentX != startX || currentY != startY) && !error);
+    return polygon;
 }
 
 GameObject GameObjectCreate(void* data, const char* name) {
