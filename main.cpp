@@ -79,6 +79,13 @@ inline mat2 Matrix2Invert(mat2 mat) {
     return Matrix2Scale(m, scalar);
 }
 
+struct ShaderColor {
+    float r, g, b, a;
+};
+inline ShaderColor ColorToShaderColor(Color col) {
+    return {(float)col.r / 255.f, (float)col.g / 255.f, (float)col.b / 255.f, (float)col.a / 255.f};
+}
+
 // TODO: Create a global memory pool that systems can take advantage of globally
 struct MemoryPool {
     void* buffer;
@@ -456,6 +463,34 @@ void ModelInstanceDraw3d(void* _mi);
 void ModelInstanceDrawImGui(void* _mi);
 GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName = "<unnamed>");
 
+struct TextureInstance {
+    Texture* texture;
+    float rotation;
+    v2 position;
+    v2 origin;
+    Color tint;
+    v2 _scale;
+    rect2 _drawSource;
+    rect2 _drawDestination;
+};
+void TextureInstanceSetSize(TextureInstance* ti, v2 size);
+void TextureInstanceInit(TextureInstance* ti, Texture* tex);
+void TextureInstanceDrawUi(void* _ti);
+GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName = "<unnamed>");
+
+// TODO: Make this reusable
+struct TextureInstance_PriestReachout {
+    TextureInstance* textureInstance;
+    Shader* shader;
+    Texture* noiseTexture;
+    float frequency;
+    ShaderColor color_a;
+    ShaderColor color_b;
+    float time;
+};
+void TextureInstance_PriestReachoutDrawUi(void* _ti);
+GameObject TextureInstance_PriestReachoutPack(TextureInstance_PriestReachout* ti, const char* instanceName = "<unnamed>");
+
 struct Collider {
     rect2 rect;
     float angle;
@@ -510,6 +545,7 @@ i32 MarchingSquaresGetDataDirection(u8 data, i32 dirPrev);
 i32 MarchingSquaresGetDataNormal(u8 data, i32 dirPrev);
 std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 x, i32 y);
 
+// General utility
 inline const char* TextFormatVector3(v3 v) {return TextFormat("[%f], [%f], [%f]", v.x, v.y, v.z);}
 inline void DrawTextShadow(const char* text, i32 x, i32 y, i32 fontSize, Color col, Color shadowCol) {
     DrawText(text, x + 1, y + 1, fontSize, shadowCol);
@@ -655,6 +691,8 @@ namespace global {
         SHADER_LIT_INSTANCED,
         SHADER_LIT_TERRAIN,
         SHADER_SKYBOX,
+        SHADER_PASSTHROUGH_2D,
+        SHADER_PRIEST_REACHOUT_2D,
         SHADER_COUNT
     };
     const char *shaderPaths[SHADER_COUNT * 2] = {
@@ -662,7 +700,9 @@ namespace global {
         "light.vs", "light.fs",
         "lightInstanced.vs", "light.fs",
         "light.vs", "lightTerrain.fs",
-        "skybox.vs", "skybox.fs"
+        "skybox.vs", "skybox.fs",
+        "passthrough2d.vs", "passthrough2d.fs",
+        "priest-reachout.vs", "priest-reachout.fs"
     };
     Shader shaders[SHADER_COUNT];
 
@@ -680,24 +720,32 @@ namespace global {
         MODEL_TREE,
         MODEL_LEVEL0,
         MODEL_LEVEL1,
+        MODEL_CURVE_EXPORT_TEST,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "taxi.glb",
         "tree.glb",
         "level0.glb",
-        "level1.glb"
+        "level1.glb",
+        "curve_export_test.glb"
     };
     Model models[MODEL_COUNT];
 
     enum GAME_TEXTURES {
         TEXTURE_STAR,
         TEXTURE_NPATCH,
+        TEXTURE_REACHOUT_BACKGROUND,
+        TEXTURE_REACHOUT_PRIEST,
+        TEXTURE_FBM_VALUE_OCT5_128,
         TEXTURE_COUNT
     };
     const char *texturePaths[global::TEXTURE_COUNT] = {
         "star.png",
-        "npatch.png"
+        "npatch.png",
+        "reachout-background.png",
+        "reachout-priest.png",
+        "value_fbm_5oct_128.png"
     };
     Texture2D textures[global::TEXTURE_COUNT];
 
@@ -740,6 +788,7 @@ namespace global {
     unordered_map<string, void*> groups = unordered_map<string, void*>();
 
     Camera* currentCamera = nullptr;
+    Camera2D currentCameraUi = {};
     TextDrawingStyle textDrawingStyle = {};
     TextDrawingStyle debugDrawingStyle = {};
     MemoryPool localMemoryPool = {};
@@ -901,6 +950,7 @@ void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
 i32 SceneSetup01(GameObject* goOut);
+i32 SceneSetup_PriestReachout(GameObject* go);
 i32 SceneSetup_DialogueTest(GameObject* go);
 i32 SceneSetup_ModelTest(GameObject* go);
 
@@ -917,7 +967,13 @@ i32 main() {
     InputInit(&global::input);
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    i32 gameObjectCount = SceneSetup01(gameObject);
+    i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
+
+    global::currentCameraUi.offset = {0.f, 0.f};
+    global::currentCameraUi.rotation = 0.f;
+    global::currentCameraUi.target = {0.f, 0.f};
+    global::currentCameraUi.zoom = 1.f;
+    // i32 gameObjectCount = SceneSetup01(gameObject);
     // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
     // i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
@@ -950,7 +1006,9 @@ i32 main() {
                 }
             EndMode3D();
         }
+        BeginMode2D(global::currentCameraUi);
         GameObjectsDrawUi(gameObject, gameObjectCount);
+        EndMode2D();
         if (debug::overlayEnabled) {
             DrawDebugUi();
             rlImGuiBegin();
@@ -1943,6 +2001,73 @@ GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName) {
     return go;
 }
 
+void TextureInstanceInit(TextureInstance* ti, Texture* tex) {
+    ti->texture = tex;
+    if (ti->texture == nullptr) {
+        return;
+    }
+    ti->position = {0.f, 0.f};
+    ti->origin = {0.f, 0.f};
+    ti->rotation = 0.f;
+    ti->tint = WHITE;
+    
+    ti->_drawSource = {0.f, 0.f, (float)tex->width, (float)tex->height};
+    ti->_drawDestination = {0.f, 0.f, (float)tex->width, (float)tex->height};
+    ti->_scale = {1.f, 1.f};
+}
+void TextureInstanceSetSize(TextureInstance* ti, v2 size) {
+    ti->_drawDestination.width = size.x;
+    ti->_drawDestination.height = size.y;
+}
+void TextureInstanceDrawUi(void* _ti) {
+    TextureInstance* ti = (TextureInstance*)_ti;
+    DrawTexturePro(*ti->texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->rotation, ti->tint);
+}
+GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName) {
+    GameObject go = GameObjectCreate(ti, "Texture Instance", instanceName);
+    go.DrawUi = TextureInstanceDrawUi;
+    return go;
+}
+
+void TextureInstance_PriestReachoutDrawUi(void* _ti) {
+    TextureInstance_PriestReachout* ti = (TextureInstance_PriestReachout*)_ti;
+    ti->time += FRAME_TIME;
+    Shader shd = *ti->shader;
+    SetShaderValue(
+        shd,
+        GetShaderLocation(shd, "time"), 
+        &ti->time,
+        SHADER_UNIFORM_FLOAT);
+    SetShaderValueTexture(
+        shd,
+        GetShaderLocation(shd, "noiseTexture"),
+        *ti->noiseTexture);
+    SetShaderValue(
+        shd,
+        GetShaderLocation(shd, "frequency"),
+        &ti->frequency,
+        SHADER_UNIFORM_FLOAT);
+    SetShaderValue(
+        shd,
+        GetShaderLocation(shd, "color_a"),
+        &ti->color_a,
+        SHADER_UNIFORM_VEC4);
+    SetShaderValue(
+        shd,
+        GetShaderLocation(shd, "color_b"),
+        &ti->color_a,
+        SHADER_UNIFORM_VEC4);
+    BeginShaderMode(shd);
+    TextureInstanceDrawUi(ti->textureInstance);
+    EndShaderMode();
+}
+GameObject TextureInstance_PriestReachoutPack(TextureInstance_PriestReachout* ti, const char* instanceName) {
+    GameObject go = GameObjectCreate(ti, "Texture Instance (Priest Reachout)", instanceName);
+    go.DrawUi = TextureInstance_PriestReachoutDrawUi;
+    return go;
+}
+
+
 void ColliderSetAngle(Collider* collider, float angle) {
     collider->angle = angle;
     collider->_rotmat = Matrix2Rotate(angle);
@@ -2730,6 +2855,30 @@ i32 SceneSetup01(GameObject* goOut) {
 
     return goCount;
 };
+i32 SceneSetup_PriestReachout(GameObject* go) {
+    i32 goCount = 0;
+
+    TextureInstance* ti = MemoryReserve<TextureInstance>();
+    TextureInstanceInit(ti, &global::textures[global::TEXTURE_REACHOUT_BACKGROUND]);
+    TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+    go[goCount] = TextureInstancePack(ti);
+    goCount++;
+
+    TextureInstance* ti2 = MemoryReserve<TextureInstance>();
+    TextureInstanceInit(ti2, &global::textures[global::TEXTURE_REACHOUT_PRIEST]);
+    TextureInstanceSetSize(ti2, {(float)global::screenWidth, (float)global::screenHeight});
+    TextureInstance_PriestReachout* tipr = MemoryReserve<TextureInstance_PriestReachout>();
+    tipr->shader = &global::shaders[global::SHADER_PRIEST_REACHOUT_2D];
+    tipr->noiseTexture = &global::textures[global::TEXTURE_FBM_VALUE_OCT5_128];
+    tipr->textureInstance = ti2;
+    tipr->frequency = 0.2f;
+    tipr->color_a = ColorToShaderColor({125, 0, 86, 255});
+    tipr->color_b = ColorToShaderColor({9, 0, 42, 255});
+    go[goCount] = TextureInstance_PriestReachoutPack(tipr);
+    goCount++;
+
+    return goCount;
+}
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
 

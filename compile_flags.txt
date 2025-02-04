@@ -1,0 +1,4 @@
+-Febuild/debug/
+-Iinclude
+-link
+-LIBPATH:lib
