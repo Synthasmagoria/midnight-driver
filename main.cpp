@@ -21,11 +21,11 @@ using std::unordered_map;
 #define FRAMERATE 60
 #define TAU PI * 2.f
 #define GAME_OBJECT_MAX 1000
+#define nameof(x) #x
 
 struct MemoryPool;
 struct GameObject;
 struct EventHandler;
-struct List;
 struct String;
 struct StringList;
 struct Typewriter;
@@ -46,6 +46,7 @@ struct Cab;
 struct Skybox;
 struct CameraManager;
 struct ModelInstance;
+struct TypeList;
 
 typedef uint8_t byte;
 typedef uint8_t u8;
@@ -134,35 +135,39 @@ struct EventArgs_DialogueOptionsSelected {
 };
 typedef void(*EventCallbackSignature_DialogueOptionsSelected)(void*, EventArgs_DialogueOptionsSelected*);
 struct EventHandler {
-    List* callbacks[EVENT_COUNT];
-    List* registrars[EVENT_COUNT];
+    TypeList* callbacks[EVENT_COUNT];
+    TypeList* registrars[EVENT_COUNT];
 };
 EventHandler EventHandlerCreate();
 void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback);
 void EventHandlerUnregisterEvent(u32 ind, void* registrar);
 void EventHandlerCallEvent(void* caller, u32 ind, void* args);
 
-struct List {
-    void** data;
+struct TypeList {
+    void* buffer;
+    MemoryPool* memoryProvider;
+    u32 bufferStride;
     u32 size;
     u32 capacity;
+    u32 typeIndex;
 };
-List ListCreate(u32 size);
-void ListInit(List* list, u32 capacity = 10);
-void ListDestroy(List* list);
-void ListResize(List* list, u32 size);
-void ListChangeCapacity(List* list, u32 capacity);
-void* ListGet(List* list, u32 ind);
-i32 ListFind(List* list, void* val);
-void ListSet(List* list, u32 ind, void* val);
-void ListPushBack(List* list, void* val);
-
-// TODO: Create a proper intlist you evil fuck
-typedef List IntList;
-void IntListInit(IntList* list, u32 capacity = 10);
-void IntListPushBack(IntList* list, i32 val);
-i32 IntListGet(IntList* list, u32 ind);
-void IntListSet(IntList* list, u32 ind, i32 val);
+enum TYPE_LIST_TYPE {
+    TYPE_LIST_I32,
+    TYPE_LIST_PTR,
+    __TYPE_LIST_TYPE_COUNT
+};
+TypeList* TypeListCreate(u32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5);
+i32 TypeListTypeGetSize(u32 typeIndex);
+void TypeListSetCapacity(TypeList* list, i32 capacity);
+void TypeListGrowCapacityIfLimitReached(TypeList* list);
+void TypeListPushBackI32(TypeList* list, i32 val);
+i32 TypeListGetI32(TypeList* list, i32 ind);
+void TypeListSetI32(TypeList* list, i32 ind, i32 val);
+i32 TypeListFindI32(TypeList* list, i32 val);
+void TypeListPushBackPtr(TypeList* list, void* val);
+void* TypeListGetPtr(TypeList* list, i32 ind);
+void TypeListSetPtr(TypeList* list, i32 ind, void* val);
+i32 TypeListFindPtr(TypeList* list, void* val);
 
 struct StringList {
     String* data;
@@ -231,7 +236,7 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName =
 struct DialogueSequence {
     Typewriter typewriter;
     DialogueOptions options;
-    IntList sections;
+    TypeList* sections;
     i32 sectionIndex;
 };
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
@@ -247,7 +252,7 @@ struct DialogueSequenceSection {
 
     StringList* text;
     StringList* options;
-    List* link;
+    TypeList* link;
 };
 DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind);
 DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
@@ -968,14 +973,25 @@ i32 main() {
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
+    // i32 gameObjectCount = SceneSetup01(gameObject);
+    // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
+    // i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
+
+    TypeList* list = TypeListCreate(TYPE_LIST_I32, &global::localMemoryPool);
+    TypeListPushBackI32(list, 100);
+    TypeListPushBackI32(list, -4);
+    TypeListPushBackI32(list, 8);
+    TypeListPushBackI32(list, 5);
+    TypeListPushBackI32(list, 49);
+    TypeListPushBackI32(list, 154);
+    for (i32 i = 0; i < list->size; i++) {
+        i32 val = TypeListGetI32(list, i);
+    }
 
     global::currentCameraUi.offset = {0.f, 0.f};
     global::currentCameraUi.rotation = 0.f;
     global::currentCameraUi.target = {0.f, 0.f};
     global::currentCameraUi.zoom = 1.f;
-    // i32 gameObjectCount = SceneSetup01(gameObject);
-    // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
-    // i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&global::input);
@@ -1368,7 +1384,7 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName) 
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     dseq->sectionIndex = 0;
-    ListInit(&dseq->sections, 50);
+    dseq->sections = TypeListCreate(TYPE_LIST_PTR, &global::localMemoryPool, 50);
     TypewriterInit(&dseq->typewriter);
     dseq->typewriter.autoAdvance = true;
     dseq->typewriter.autoHide = false;
@@ -1380,7 +1396,7 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
             DialogueSequenceSection* dss = nullptr;
             StringList* text = nullptr;
             StringList* opt = nullptr;
-            IntList* link = nullptr;
+            TypeList* link = nullptr;
 
             dss = DialogueSequenceSectionCreate(3, 3);
             text = dss->text;
@@ -1392,18 +1408,18 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
             StringListAdd(opt, "You will");
             StringListAdd(opt, "No");
             StringListAdd(opt, "Repeat that please");
-            IntListPushBack(link, 1);
-            IntListPushBack(link, -1);
-            IntListPushBack(link, 0);
-            ListPushBack(&dseq->sections, dss);
+            TypeListPushBackI32(link, 1);
+            TypeListPushBackI32(link, -1);
+            TypeListPushBackI32(link, 0);
+            TypeListPushBackPtr(dseq->sections, dss);
 
             dss = DialogueSequenceSectionCreate(1, 0);
             text = dss->text;
             opt = dss->options;
             link = dss->link;
             StringListAdd(text, "I'm glad we agree, truly!");
-            IntListPushBack(link, -1);
-            ListPushBack(&dseq->sections, dss);
+            TypeListPushBackI32(link, -1);
+            TypeListPushBackPtr(dseq->sections, dss);
             break;
         }
     }
@@ -1434,7 +1450,7 @@ void DialogueSequenceFree(void* _dseq) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
 }
 DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind) {
-    return (DialogueSequenceSection*)ListGet(&dseq->sections, ind);
+    return (DialogueSequenceSection*)TypeListGetPtr(dseq->sections, ind);
 }
 DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount) {
     DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>();
@@ -1442,8 +1458,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     StringListInit(dss->text, textCount);
     dss->options = MemoryReserve<StringList>();
     StringListInit(dss->options, optionCount);
-    dss->link = MemoryReserve<List>();
-    ListInit(dss->link, 50);
+    dss->link = TypeListCreate(TYPE_LIST_PTR, &global::localMemoryPool);
     return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName) {
@@ -1464,7 +1479,7 @@ void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_Typewri
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, dseq->sectionIndex);
-    i32 nextSectionIndex = (i32)ListGet(dss->link, args->index);
+    i32 nextSectionIndex = TypeListGetI32(dss->link, args->index);
     if (nextSectionIndex == -1) {
         dseq->options.visible = false;
         dseq->typewriter.visible = false;
@@ -2356,141 +2371,150 @@ GameObject GameObjectCreate(void* data, const char* objectName, const char* inst
 EventHandler EventHandlerCreate() {
     EventHandler eh = {};
     for (u32 i = 0; i < EVENT_COUNT; i++) {
-        eh.callbacks[i] = MemoryReservePersistent<List>();
-        ListInit(eh.callbacks[i]);
-        eh.registrars[i] = MemoryReservePersistent<List>();
-        ListInit(eh.registrars[i]);
+        eh.callbacks[i] = TypeListCreate(TYPE_LIST_PTR, &global::persistentMemoryPool);
+        eh.registrars[i] = TypeListCreate(TYPE_LIST_PTR, &global::persistentMemoryPool);
     }
     return eh;
 }
 void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback) {
     assert(ind < EVENT_COUNT); // event doesn't exist
-    assert(ListFind(global::eventHandler.registrars[ind], registrar) == -1); // event already registered
-    ListPushBack(global::eventHandler.callbacks[ind], callback);
-    ListPushBack(global::eventHandler.registrars[ind], registrar);
+    assert(TypeListFindPtr(global::eventHandler.registrars[ind], registrar) == -1); // event already registered
+    TypeListPushBackPtr(global::eventHandler.callbacks[ind], callback);
+    TypeListPushBackPtr(global::eventHandler.registrars[ind], registrar);
 }
 void EventHandlerUnregisterEvent(u32 ind, void* registrar) {
     assert(ind < EVENT_COUNT);
-    assert(ListFind(global::eventHandler.registrars[ind], registrar) != -1);
+    assert(TypeListFindPtr(global::eventHandler.registrars[ind], registrar) != -1);
     // TODO: remove event
 }
 void EventHandlerCallEvent(void* caller, u32 ind, void* _args) {
     assert(ind < EVENT_COUNT);
-    List* registrars = global::eventHandler.registrars[ind];
-    List* callbacks = global::eventHandler.callbacks[ind];
+    TypeList* registrars = global::eventHandler.registrars[ind];
+    TypeList* callbacks = global::eventHandler.callbacks[ind];
     for (u32 i = 0; i < registrars->size; i++) {
-        EventCallbackSignature callback = (EventCallbackSignature)ListGet(callbacks, i);
+        EventCallbackSignature callback = (EventCallbackSignature)TypeListGetPtr(callbacks, i);
         switch(ind) {
             case EVENT_TYPEWRITER_LINE_COMPLETE: {
                 EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
-                EventCallbackSignature_TypewriterLineComplete callback = (EventCallbackSignature_TypewriterLineComplete)ListGet(callbacks, i);
-                callback(ListGet(registrars, i), args);
+                EventCallbackSignature_TypewriterLineComplete callback = (EventCallbackSignature_TypewriterLineComplete)TypeListGetPtr(callbacks, i);
+                callback(TypeListGetPtr(registrars, i), args);
             }
             case EVENT_DIALOGUE_OPTIONS_SELECTED: {
                 EventArgs_DialogueOptionsSelected* args = (EventArgs_DialogueOptionsSelected*)_args;
-                EventCallbackSignature_DialogueOptionsSelected callback = (EventCallbackSignature_DialogueOptionsSelected)ListGet(callbacks, i);
-                callback(ListGet(registrars, i), args);
+                EventCallbackSignature_DialogueOptionsSelected callback = (EventCallbackSignature_DialogueOptionsSelected)TypeListGetPtr(callbacks, i);
+                callback(TypeListGetPtr(registrars, i), args);
             }
         }
     }
 }
 
-List ListCreate(u32 size) {
-    List list = {};
-    ListInit(&list, size);
+TypeList* TypeListCreate(u32 typeIndex, MemoryPool* memoryPool, i32 capacity) {
+    TypeList* list = (TypeList*)MemoryPoolReserve(memoryPool, sizeof(TypeList));
+    list->memoryProvider = memoryPool;
+    list->typeIndex = typeIndex;
+    list->bufferStride = TypeListTypeGetSize(typeIndex);
+    list->size = 0;
+    list->capacity = 0;
+    TypeListSetCapacity(list, capacity);
     return list;
 }
-void ListInit(List* list, u32 capacity) {
-    if (capacity == 0) {
-        list->data = nullptr;
-    } else {
-        list->data = (void**)malloc(capacity * sizeof(void*));
-    }
-    list->size = 0;
-    list->capacity = capacity;
-}
-void ListDestroy(List* list) {
-    if (list->data != nullptr) {
-        free(list->data);
-        list->data = nullptr;
-        list->size = 0;
-    }
-}
-void ListResize(List* list, u32 size) {
-    if (list->data != nullptr) {
-        list->data = (void**)realloc(list->data, sizeof(void*) * size);
-    } else {
-        list->data = (void**)malloc(sizeof(void*) * size);
-    }
-    while (list->size < size) {
-        list->data[list->size] = 0;
-        list->size++;
-    }
-    list->capacity = size;
-    list->size = size;
-}
-void ListChangeCapacity(List* list, u32 capacity) {
-    if (capacity < list->size) {
-        TraceLog(LOG_ERROR, "List: Couldn't change capacity to be smaller than list size");
+void TypeListSetCapacity(TypeList* list, i32 capacity) {
+    if (capacity < 0) {
+        TraceLog(LOG_WARNING, "%s: Tried changing capacity to below 0", nameof(TypeList));
+        assert(false);
         return;
     }
-    if (capacity != list->capacity) {
-        if (capacity == 0 && list->data != nullptr) { // this shouldn't ever happen
-            free(list->data);
-            list->data = nullptr;
+    if (capacity < list->size) {
+        TraceLog(LOG_WARNING, "%s: Tried changing capacity to less than list size", nameof(TypeList));
+        assert(false);
+        return;
+    }
+    if (capacity == 0) {
+        list->buffer = nullptr;
+        list->capacity = capacity;
+        return;
+    }
+    if (capacity > 0 && capacity != list->capacity) {
+        if (capacity < list->capacity) {
+            list->capacity = capacity;
         } else {
-            if (list->data != nullptr) {
-                if (list->data != nullptr) {
-                    list->data = (void**)realloc(list->data, sizeof(void*) * capacity);
-                } else {
-                    list->data = (void**)malloc(sizeof(void*) * capacity);
-                }
-            }
+            void* newBuffer = MemoryPoolReserve(list->memoryProvider, capacity * list->bufferStride);
+            memcpy(newBuffer, list->buffer, list->bufferStride * list->size);
+            list->buffer = newBuffer;
+            list->capacity = capacity;
         }
     }
-    list->capacity = capacity;
 }
-void* ListGet(List* list, u32 ind) {
-    if (ind >= list->size && ind < list->capacity) {
-        TraceLog(LOG_ERROR, "List: Tried getting value outside of size in list, returned '-1'");
-        return nullptr;
+i32 TypeListTypeGetSize(u32 typeIndex) {
+    switch (typeIndex) {
+        case TYPE_LIST_I32:
+            return sizeof(i32);
+        case TYPE_LIST_PTR:
+            return sizeof(char*);
+        default:
+            assert(false);
     }
-    return list->data[ind];
 }
-i32 ListFind(List* list, void* val) {
+void TypeListGrowCapacityIfLimitReached(TypeList* list) {
+    if (list->capacity == list->size) {
+        if (list->capacity == 0) {
+            TypeListSetCapacity(list, 5);
+        } else {
+            TypeListSetCapacity(list, list->capacity * 5);
+        }
+    }
+}
+void TypeListPushBackI32(TypeList* list, i32 val) {
+    assert(list->typeIndex == TYPE_LIST_I32);
+    TypeListGrowCapacityIfLimitReached(list);
+    ((i32*)list->buffer)[list->size] = val;
+    list->size++;
+}
+i32 TypeListGetI32(TypeList* list, i32 ind) {
+    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(ind < list->size);
+    return ((i32*)list->buffer)[ind];
+}
+void TypeListSetI32(TypeList* list, i32 ind, i32 val) {
+    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(ind < list->size);
+    ((i32*)list->buffer)[ind] = val;
+}
+i32 TypeListFindI32(TypeList* list, i32 val) {
+    assert(list->typeIndex == TYPE_LIST_I32);
+    i32* buffer = (i32*)list->buffer;
     for (i32 i = 0; i < list->size; i++) {
-        if (ListGet(list, i) == val) {
+        if (buffer[i] == val) {
             return i;
         }
     }
     return -1;
 }
-void ListSet(List* list, u32 ind, void* val) {
-    list->data[ind] = val;
-}
-void ListPushBack(List* list, void* val) {
-    if (list->capacity == list->size) {
-        if (list->capacity == 0) {
-            ListChangeCapacity(list, 8 * sizeof(void*));
-        } else {
-            ListChangeCapacity(list, list->capacity * 2 * sizeof(void*));
-        }
-    }
-    list->data[list->size] = val;
+void TypeListPushBackPtr(TypeList* list, void* val) {
+    assert(list->typeIndex == TYPE_LIST_PTR);
+    TypeListGrowCapacityIfLimitReached(list);
+    ((void**)list->buffer)[list->size] = val;
     list->size++;
 }
-
-inline void IntListInit(IntList* list, u32 capacity) {
-    ListInit(list, capacity);
+void* TypeListGetPtr(TypeList* list, i32 ind) {
+    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(ind < list->size);
+    return ((void**)list->buffer)[ind];
 }
-inline void IntListPushBack(IntList* list, i32 val) {
-    ListPushBack(list, (void*)val);
+void TypeListSetPtr(TypeList* list, i32 ind, void* val) {
+    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(ind < list->size);
+    ((void**)list->buffer)[ind] = val;
 }
-i32 IntListGet(IntList* list, u32 ind) {
-    return (i32)list->data[ind];
-}
-void IntListSet(IntList* list, u32 ind, i32 val) {
-    list->data[ind] = (void*)val;
+i32 TypeListFindPtr(TypeList* list, void* val) {
+    assert(list->typeIndex == TYPE_LIST_PTR);
+    void** buffer = (void**)list->buffer;
+    for (i32 i = 0; i < list->size; i++) {
+        if (buffer[i] == val) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 void StringListInit(StringList* list, u32 size) {
