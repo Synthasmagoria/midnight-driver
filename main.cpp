@@ -96,14 +96,11 @@ struct MemoryPool {
 MemoryPool MemoryPoolCreate(i32 size);
 void MemoryPoolDestroy(MemoryPool* mm);
 void* MemoryPoolReserve(MemoryPool* mm, i32 size);
+void MemoryPoolClear(MemoryPool* mm);
 template <typename T>
-T* MemoryReserve();
+T* MemoryReserve(MemoryPool* mm);
 template <typename T>
-T* MemoryReserve(u32 num);
-template <typename T>
-T* MemoryReservePersistent();
-template <typename T>
-T* MemoryReservePersistent(u32 num);
+T* MemoryReserve(MemoryPool* mm, i32 size);
 
 struct GameObject {
     void (*Update) (void*);
@@ -598,9 +595,9 @@ float GetClosestWrappedF(float from, float to, float bounds_min, float bounds_ma
     return fabs(c) < fabs(result) ? c + from : result + from;
 }
 
-const char* CstringDuplicate(const char* cstr) {
+const char* CstringDuplicate(const char* cstr, MemoryPool* mm) {
     i32 len = strlen(cstr);
-    char* cstrNew = MemoryReserve<char>(len + 1);
+    char* cstrNew = MemoryReserve<char>(mm, len + 1);
     strcpy(cstrNew, cstr);
     cstrNew[len] = '\0';
     return cstrNew;
@@ -796,8 +793,9 @@ namespace global {
     Camera2D currentCameraUi = {};
     TextDrawingStyle textDrawingStyle = {};
     TextDrawingStyle debugDrawingStyle = {};
-    MemoryPool localMemoryPool = {};
-    MemoryPool persistentMemoryPool = {};
+    MemoryPool localMemory = {};
+    MemoryPool sceneMemory = {};
+    MemoryPool globalMemory = {};
     EventHandler eventHandler;
     i32 gameObjectIdCounter = 100000;
     const i32 screenWidth = 1440;
@@ -977,7 +975,7 @@ i32 main() {
     // i32 gameObjectCount = SceneSetup_DialogueTest(gameObject);
     // i32 gameObjectCount = SceneSetup_ModelTest(gameObject);
 
-    TypeList* list = TypeListCreate(TYPE_LIST_I32, &global::localMemoryPool);
+    TypeList* list = TypeListCreate(TYPE_LIST_I32, &global::sceneMemory);
     TypeListPushBackI32(list, 100);
     TypeListPushBackI32(list, -4);
     TypeListPushBackI32(list, 8);
@@ -1043,16 +1041,17 @@ i32 main() {
     }
 
     GameObjectsFree(gameObject, gameObjectCount);
-    MemoryPoolDestroy(&global::localMemoryPool);
-    MemoryPoolDestroy(&global::persistentMemoryPool);
+    MemoryPoolDestroy(&global::sceneMemory);
+    MemoryPoolDestroy(&global::globalMemory);
     UnloadGameResources();
 
     return 0;
 }
 
 void InitGlobals() {
-    global::localMemoryPool = MemoryPoolCreate(1 << 16);
-    global::persistentMemoryPool = MemoryPoolCreate(1 << 16);
+    global::localMemory = MemoryPoolCreate(1 << 16);
+    global::sceneMemory = MemoryPoolCreate(1 << 16);
+    global::globalMemory = MemoryPoolCreate(1 << 16);
     global::eventHandler = EventHandlerCreate();
 
     TextDrawingStyle textDrawingStyle = {};
@@ -1078,8 +1077,8 @@ void DrawDebugUi() {
 }
 void DrawDebugImGui() {
     if (ImGui::CollapsingHeader("General info", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text(TextFormat("Local memory: %ib / %ib", global::localMemoryPool.location, global::localMemoryPool.size));
-        ImGui::Text(TextFormat("Global memory: %ib / %ib", global::persistentMemoryPool.location, global::persistentMemoryPool.size));
+        ImGui::Text(TextFormat("Local memory: %ib / %ib", global::sceneMemory.location, global::sceneMemory.size));
+        ImGui::Text(TextFormat("Global memory: %ib / %ib", global::globalMemory.location, global::globalMemory.size));
     }
 }
 
@@ -1144,21 +1143,18 @@ void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
     }
     return reserve;
 }
-template<typename T>
-T* MemoryReserve() {
-    return (T*)MemoryPoolReserve(&global::localMemoryPool, sizeof(T));
+void MemoryPoolClear(MemoryPool* mm) {
+    assert(mm->size > 0);
+    memset(mm->buffer, 0, mm->location);
+    mm->location = 0;
 }
 template <typename T>
-T* MemoryReserve(u32 num) {
-    return (T*)MemoryPoolReserve(&global::localMemoryPool, sizeof(T) * num);
+T* MemoryReserve(MemoryPool* mm) {
+    return (T*)MemoryPoolReserve(mm, sizeof(T));
 }
 template <typename T>
-T* MemoryReservePersistent() {
-    return (T*)MemoryPoolReserve(&global::persistentMemoryPool, sizeof(T));
-}
-template <typename T>
-T* MemoryReservePersistent(u32 num) {
-    return (T*)MemoryPoolReserve(&global::persistentMemoryPool, sizeof(T) * num);
+T* MemoryReserve(MemoryPool* mm, i32 size) {
+    return (T*)MemoryPoolReserve(mm, sizeof(T) * size);
 }
 
 String StringCreate(char* text) {
@@ -1384,7 +1380,7 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName) 
 
 void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     dseq->sectionIndex = 0;
-    dseq->sections = TypeListCreate(TYPE_LIST_PTR, &global::localMemoryPool, 50);
+    dseq->sections = TypeListCreate(TYPE_LIST_PTR, &global::sceneMemory, 50);
     TypewriterInit(&dseq->typewriter);
     dseq->typewriter.autoAdvance = true;
     dseq->typewriter.autoHide = false;
@@ -1453,12 +1449,12 @@ DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 
     return (DialogueSequenceSection*)TypeListGetPtr(dseq->sections, ind);
 }
 DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount) {
-    DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>();
-    dss->text = MemoryReserve<StringList>();
+    DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>(&global::sceneMemory);
+    dss->text = MemoryReserve<StringList>(&global::sceneMemory);
     StringListInit(dss->text, textCount);
-    dss->options = MemoryReserve<StringList>();
+    dss->options = MemoryReserve<StringList>(&global::sceneMemory);
     StringListInit(dss->options, optionCount);
-    dss->link = TypeListCreate(TYPE_LIST_PTR, &global::localMemoryPool);
+    dss->link = TypeListCreate(TYPE_LIST_PTR, &global::sceneMemory);
     return dss;
 }
 GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName) {
@@ -2361,8 +2357,8 @@ std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 
 GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName) {
     GameObject go = {};
     go.data = data;
-    go.objectName = CstringDuplicate(objectName);
-    go.instanceName = CstringDuplicate(instanceName);
+    go.objectName = CstringDuplicate(objectName, &global::sceneMemory);
+    go.instanceName = CstringDuplicate(instanceName, &global::sceneMemory);
     go.id = global::gameObjectIdCounter;
     global::gameObjectIdCounter++;
     return go;
@@ -2371,8 +2367,8 @@ GameObject GameObjectCreate(void* data, const char* objectName, const char* inst
 EventHandler EventHandlerCreate() {
     EventHandler eh = {};
     for (u32 i = 0; i < EVENT_COUNT; i++) {
-        eh.callbacks[i] = TypeListCreate(TYPE_LIST_PTR, &global::persistentMemoryPool);
-        eh.registrars[i] = TypeListCreate(TYPE_LIST_PTR, &global::persistentMemoryPool);
+        eh.callbacks[i] = TypeListCreate(TYPE_LIST_PTR, &global::globalMemory);
+        eh.registrars[i] = TypeListCreate(TYPE_LIST_PTR, &global::globalMemory);
     }
     return eh;
 }
@@ -2518,7 +2514,7 @@ i32 TypeListFindPtr(TypeList* list, void* val) {
 }
 
 void StringListInit(StringList* list, u32 size) {
-    list->data = MemoryReserve<String>(size);
+    list->data = MemoryReserve<String>(&global::sceneMemory, size);
     list->capacity = size;
     list->size = 0;
 }
@@ -2530,7 +2526,7 @@ void StringListAdd(StringList* list, const char* cstr) {
     String* data = (String*)list->data;
     i32 cstrLen = strlen(cstr);
     String* str = data + list->size;
-    str->cstr = MemoryReserve<char>(cstrLen + 1);
+    str->cstr = MemoryReserve<char>(&global::sceneMemory, cstrLen + 1);
     str->length = cstrLen;
     strcpy(str->cstr, cstr);
     str->cstr[cstrLen] = '\0';
@@ -2835,7 +2831,7 @@ void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *tra
 i32 SceneSetup01(GameObject* goOut) {
     i32 goCount = 0;
 
-    Skybox* skybox = MemoryReserve<Skybox>();
+    Skybox* skybox = MemoryReserve<Skybox>(&global::sceneMemory);
     skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
     skybox->shader = global::shaders[global::SHADER_SKYBOX];
     {
@@ -2852,7 +2848,7 @@ i32 SceneSetup01(GameObject* goOut) {
         CUBEMAP_LAYOUT_AUTO_DETECT);
     goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    ModelInstance* mi = MemoryReserve<ModelInstance>(&global::sceneMemory);
     mi->model = global::models[global::MODEL_LEVEL1];
     mi->position = {0.f, 0.f, 0.f};
     mi->scale = 1.f;
@@ -2865,15 +2861,15 @@ i32 SceneSetup01(GameObject* goOut) {
     hgi.position = bb.min;
     hgi.size = bb.max - bb.min;
     hgi.resdiv = 2;
-    Heightmap* hm = MemoryReserve<Heightmap>();
+    Heightmap* hm = MemoryReserve<Heightmap>(&global::sceneMemory);
     HeightmapInit(hm, hgi);
     global::groups["terrainHeightmap"] = hm;
 
-    Cab* cab = MemoryReserve<Cab>();
+    Cab* cab = MemoryReserve<Cab>(&global::sceneMemory);
     CabInit(cab);
     goOut[goCount] = CabPack(cab); goCount++;
 
-    CameraManager* camMan = MemoryReserve<CameraManager>();
+    CameraManager* camMan = MemoryReserve<CameraManager>(&global::sceneMemory);
     CameraManagerInit(camMan, CameraGetDefault());
     goOut[goCount] = CameraManagerPack(camMan); goCount++;
 
@@ -2882,16 +2878,16 @@ i32 SceneSetup01(GameObject* goOut) {
 i32 SceneSetup_PriestReachout(GameObject* go) {
     i32 goCount = 0;
 
-    TextureInstance* ti = MemoryReserve<TextureInstance>();
+    TextureInstance* ti = MemoryReserve<TextureInstance>(&global::sceneMemory);
     TextureInstanceInit(ti, &global::textures[global::TEXTURE_REACHOUT_BACKGROUND]);
     TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
     go[goCount] = TextureInstancePack(ti);
     goCount++;
 
-    TextureInstance* ti2 = MemoryReserve<TextureInstance>();
+    TextureInstance* ti2 = MemoryReserve<TextureInstance>(&global::sceneMemory);
     TextureInstanceInit(ti2, &global::textures[global::TEXTURE_REACHOUT_PRIEST]);
     TextureInstanceSetSize(ti2, {(float)global::screenWidth, (float)global::screenHeight});
-    TextureInstance_PriestReachout* tipr = MemoryReserve<TextureInstance_PriestReachout>();
+    TextureInstance_PriestReachout* tipr = MemoryReserve<TextureInstance_PriestReachout>(&global::sceneMemory);
     tipr->shader = &global::shaders[global::SHADER_PRIEST_REACHOUT_2D];
     tipr->noiseTexture = &global::textures[global::TEXTURE_FBM_VALUE_OCT5_128];
     tipr->textureInstance = ti2;
@@ -2906,7 +2902,7 @@ i32 SceneSetup_PriestReachout(GameObject* go) {
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
 
-    DialogueSequence* dseq = MemoryReserve<DialogueSequence>();
+    DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&global::sceneMemory);
     DialogueSequenceInit(dseq, 0);
     go[goCount] = DialogueSequencePack(dseq);
     goCount++;
@@ -2916,12 +2912,12 @@ i32 SceneSetup_DialogueTest(GameObject* go) {
 i32 SceneSetup_ModelTest(GameObject* go) {
     i32 goCount = 0;
 
-    CameraManager* cm = MemoryReserve<CameraManager>();
+    CameraManager* cm = MemoryReserve<CameraManager>(&global::sceneMemory);
     CameraManagerInit(cm, CameraGetDefault());
     go[goCount] = CameraManagerPack(cm);
     goCount++;
 
-    ModelInstance* mi = MemoryReserve<ModelInstance>();
+    ModelInstance* mi = MemoryReserve<ModelInstance>(&global::sceneMemory);
     mi->model = LOAD_MODEL("level_prototypeB.glb");
     //mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
     mi->tint = WHITE;
