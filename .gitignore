@@ -2,3 +2,5 @@
 /build
 remedybg.exe
 /obj
+debug.rdbg
+init.bat
