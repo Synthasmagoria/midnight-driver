@@ -417,7 +417,7 @@ struct TextDrawingStyle {
     Color color;
     Font font;
     float size;
-    i32 charSpacing;
+    float charSpacing;
 };
 inline TextDrawingStyle TextDrawingStyleGetDefault() {
     TextDrawingStyle tds = {};
@@ -448,7 +448,7 @@ enum INPUT {
 #define INPUT_SELECT INPUT_ACCELERATE
 
 struct Input {
-    u32 map[INPUT_COUNT];
+    i32 map[INPUT_COUNT];
     bool pressed[INPUT_COUNT];
     bool down[INPUT_COUNT];
     bool up[INPUT_COUNT];
@@ -552,20 +552,20 @@ struct GameObject {
     void* data;
     const char* objectName;
     const char* instanceName;
-    u32 id;
-    static i64 idCounter;
+    i32 id;
+    static i32 idCounter;
 };
-i64 GameObject::idCounter = 100000;
+i32 GameObject::idCounter = 100000;
 GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName = "<unnamed>");
 
 struct StringList {
     String* data;
-    u32 size;
-    u32 capacity;
+    i32 size;
+    i32 capacity;
 };
-void StringListInit(StringList* list, u32 size, MemoryPool* mp);
+void StringListInit(StringList* list, i32 size, MemoryPool* mp);
 void StringListAdd(StringList* list, const char* cstr, MemoryPool* mp);
-String* StringListGet(StringList* list, u32 ind);
+String* StringListGet(StringList* list, i32 ind);
 
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
 enum EVENT_HANDLER_EVENTS {
@@ -588,25 +588,25 @@ struct EventHandler {
     TypeList* registrars[EVENT_COUNT];
 };
 EventHandler EventHandlerCreate();
-void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback);
-void EventHandlerUnregisterEvent(u32 ind, void* registrar);
-void EventHandlerCallEvent(void* caller, u32 ind, void* args);
+void EventHandlerRegisterEvent(i32 ind, void* registrar, EventCallbackSignature callback);
+void EventHandlerUnregisterEvent(i32 ind, void* registrar);
+void EventHandlerCallEvent(void* caller, i32 ind, void* args);
 
 struct TypeList {
     void* buffer;
     MemoryPool* memoryProvider;
-    u32 bufferStride;
-    u32 size;
-    u32 capacity;
-    u32 typeIndex;
+    i32 bufferStride;
+    i32 size;
+    i32 capacity;
+    i32 typeIndex;
 };
 enum TYPE_LIST_TYPE {
     TYPE_LIST_I32,
     TYPE_LIST_PTR,
     __TYPE_LIST_TYPE_COUNT
 };
-TypeList* TypeListCreate(u32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5);
-i32 TypeListTypeGetSize(u32 typeIndex);
+TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5);
+i32 TypeListTypeGetSize(i32 typeIndex);
 void TypeListSetCapacity(TypeList* list, i32 capacity);
 void TypeListGrowCapacityIfLimitReached(TypeList* list);
 void TypeListPushBackI32(TypeList* list, i32 val);
@@ -673,7 +673,6 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDrawUi(void* _dseq);
-void DialogueSequenceFree(void* _dseq);
 GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName = "<unnamed>");
 void DialogueSequenceStartSection(i32 ind);
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
@@ -690,15 +689,15 @@ struct HeightmapGenerationInfo {
     Image *heightmapImage;
     v3 position;
     v3 size;
-    u32 resdiv;
+    i32 resdiv;
 };
 struct Heightmap {
     v3 position;
     v3 size;
-    u32 heightDataWidth;
-    u32 heightDataHeight;
+    i32 heightDataWidth;
+    i32 heightDataHeight;
     float *heightData;
-    u32 width;
+    i32 width;
 };
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info);
 float HeightmapSampleHeight(Heightmap* heightmap, float x, float z);
@@ -706,7 +705,7 @@ void HeightmapFree(Heightmap* hm);
 
 struct InstanceMeshRenderData {
     float16 *transforms;
-    u32 instanceCount;
+    i32 instanceCount;
     Model _model;
     Mesh mesh;
     Material material;
@@ -736,7 +735,7 @@ void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material
 void ParticleSystemFree(void* psys);
 void ParticleSystemUpdate(void* psys);
 void ParticleSystemDraw3d(void* psys);
-GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName = "<unnamed>"), instanceName;
+GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName = "<unnamed>");
 
 struct TextureInstance {
     Texture* texture;
@@ -772,7 +771,7 @@ namespace mdEngine {
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
 };
 
-void MdEngineInit(i64 memoryPoolSize) {
+void MdEngineInit(i32 memoryPoolSize) {
     if (mdEngine::initialized) {
         return;
     }
@@ -788,9 +787,9 @@ void MdEngineInit(i64 memoryPoolSize) {
     Engine dependent utility implementations
 */
 const char* CstringDuplicate(const char* cstr, MemoryPool* mm) {
-    i32 len = strlen(cstr);
+    i32 len = (i32)strlen(cstr);
     char* cstrNew = MemoryReserve<char>(mm, len + 1);
-    strcpy(cstrNew, cstr);
+    strcpy_s(cstrNew, len + 1, cstr);
     cstrNew[len] = '\0';
     return cstrNew;
 }
@@ -913,12 +912,12 @@ String _StringCreate(i32 length) {
     return str;
 }
 String StringSet(String str, char* text) {
-    i32 len = strlen(text) + 1;
+    i32 len = (i32)strlen(text) + 1;
     if (str.cstr != nullptr) {
         free(str.cstr);
     }
     str.cstr = (char*)malloc(len);
-    memccpy(str.cstr, text, '\0', len);
+    _memccpy(str.cstr, text, '\0', len);
     str.length = len;
     return str;
 }
@@ -927,7 +926,7 @@ String StringSubstr(String str, i32 start, i32 count) {
         count = str.length - start;
     }
     String substr = _StringCreate(count);
-    memccpy(substr.cstr, &str.cstr[start], '\0', count);
+    _memccpy(substr.cstr, &str.cstr[start], '\0', count);
     return substr;
 }
 void StringDestroy(String str) {
@@ -978,7 +977,7 @@ void MarchingSquaresDataDraw(Texture texture, v2 frameSize, MarchingSquaresResul
             DrawTextureRec(texture, srcRect, position, WHITE);
             DrawLineV(position, {position.x + frameSize.x, position.y}, transparentWhite);
             DrawLineV(position, {position.x, position.y + frameSize.y}, transparentWhite);
-            DrawText(TextFormat("%u", index), position.x, position.y, 12, transparentWhite);
+            DrawText(TextFormat("%u", index), (i32)position.x, (i32)position.y, 12, transparentWhite);
         }
     }
 }
@@ -1092,8 +1091,6 @@ std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 
     i32 movePrevY = 0;
     i32 moveDirPrev = 0;
     i32 normDirPrev = 0;
-    i32 dirPrevX = 0;
-    i32 dirPrevY = 0;
 #define MARCHING_SQUARES_POLYGONIZE_AT_MAX_ITERATION_COUNT 512
     i32 iterations = 0;
     bool error = false;
@@ -1103,7 +1100,7 @@ std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 
         error |= moveDir == MARCHING_SQUARES_DIRECTION_NONE;
         i32 normDir = MarchingSquaresGetDataNormal(data, moveDirPrev);
         error |= normDir == MARCHING_SQUARES_NORMAL_NONE;
-        
+
         if (normDir != normDirPrev) {
             polygon.push_back(v2{(float)currentX - (float)movePrevX / 2.f, (float)currentY - (float)movePrevY / 2.f});
         }
@@ -1123,7 +1120,7 @@ std::vector<v2> MarchingSquaresDataPolygonizeAt(MarchingSquaresResult* msr, i32 
         normDirPrev = normDir;
         iterations++;
         MarchingSquaresSetMarchingBit(msr, currentX, currentY, true);
-        
+
         if (currentX < 0 || currentX >= msr->width || currentY < 0 || currentY >= msr->height) {
             break;
         }
@@ -1181,7 +1178,6 @@ void ColliderDraw(Collider* collider, Color color) {
     for (i32 i = 0; i < 4; i++) {
         DrawLineV(pts[i] + middle, pts[(i+1)%4] + middle, color);
     }
-    u8 a = (u8)color.a / 2;
     v2 arrowTail = {0.f, -8.f};
     v2 arrowTip = {0.f, 8.f};
     v2 arrowEndTop = arrowTip + v2{-4.f, -4.f};
@@ -1221,7 +1217,7 @@ GameObject GameObjectCreate(void* data, const char* objectName, const char* inst
     return go;
 }
 
-void StringListInit(StringList* list, u32 size, MemoryPool* mp) {
+void StringListInit(StringList* list, i32 size, MemoryPool* mp) {
     list->data = MemoryReserve<String>(mp, size);
     list->capacity = size;
     list->size = 0;
@@ -1232,15 +1228,15 @@ void StringListAdd(StringList* list, const char* cstr, MemoryPool* mp) {
         return;
     }
     String* data = (String*)list->data;
-    i32 cstrLen = strlen(cstr);
+    i32 cstrLen = (i32)strlen(cstr);
     String* str = data + list->size;
     str->cstr = MemoryReserve<char>(mp, cstrLen + 1);
     str->length = cstrLen;
-    strcpy(str->cstr, cstr);
+    strcpy_s(str->cstr, cstrLen + 1, cstr);
     str->cstr[cstrLen] = '\0';
     list->size++;
 }
-String* StringListGet(StringList* list, u32 ind) {
+String* StringListGet(StringList* list, i32 ind) {
     if (ind >= list->size) {
         TraceLog(LOG_ERROR, "StringList: index '%i' is out of range");
         return nullptr;
@@ -1250,29 +1246,28 @@ String* StringListGet(StringList* list, u32 ind) {
 
 EventHandler EventHandlerCreate() {
     EventHandler eh = {};
-    for (u32 i = 0; i < EVENT_COUNT; i++) {
+    for (i32 i = 0; i < EVENT_COUNT; i++) {
         eh.callbacks[i] = TypeListCreate(TYPE_LIST_PTR, &mdEngine::persistentMemory);
         eh.registrars[i] = TypeListCreate(TYPE_LIST_PTR, &mdEngine::persistentMemory);
     }
     return eh;
 }
-void EventHandlerRegisterEvent(u32 ind, void* registrar, EventCallbackSignature callback) {
+void EventHandlerRegisterEvent(i32 ind, void* registrar, EventCallbackSignature callback) {
     assert(ind < EVENT_COUNT); // event doesn't exist
     assert(TypeListFindPtr(mdEngine::eventHandler.registrars[ind], registrar) == -1); // event already registered
     TypeListPushBackPtr(mdEngine::eventHandler.callbacks[ind], callback);
     TypeListPushBackPtr(mdEngine::eventHandler.registrars[ind], registrar);
 }
-void EventHandlerUnregisterEvent(u32 ind, void* registrar) {
+void EventHandlerUnregisterEvent(i32 ind, void* registrar) {
     assert(ind < EVENT_COUNT);
     assert(TypeListFindPtr(mdEngine::eventHandler.registrars[ind], registrar) != -1);
     // TODO: remove event
 }
-void EventHandlerCallEvent(void* caller, u32 ind, void* _args) {
+void EventHandlerCallEvent(void* caller, i32 ind, void* _args) {
     assert(ind < EVENT_COUNT);
     TypeList* registrars = mdEngine::eventHandler.registrars[ind];
     TypeList* callbacks = mdEngine::eventHandler.callbacks[ind];
-    for (u32 i = 0; i < registrars->size; i++) {
-        EventCallbackSignature callback = (EventCallbackSignature)TypeListGetPtr(callbacks, i);
+    for (i32 i = 0; i < registrars->size; i++) {
         switch(ind) {
             case EVENT_TYPEWRITER_LINE_COMPLETE: {
                 EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
@@ -1288,7 +1283,7 @@ void EventHandlerCallEvent(void* caller, u32 ind, void* _args) {
     }
 }
 
-TypeList* TypeListCreate(u32 typeIndex, MemoryPool* memoryPool, i32 capacity) {
+TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity) {
     TypeList* list = (TypeList*)MemoryPoolReserve(memoryPool, sizeof(TypeList));
     list->memoryProvider = memoryPool;
     list->typeIndex = typeIndex;
@@ -1325,7 +1320,7 @@ void TypeListSetCapacity(TypeList* list, i32 capacity) {
         }
     }
 }
-i32 TypeListTypeGetSize(u32 typeIndex) {
+i32 TypeListTypeGetSize(i32 typeIndex) {
     switch (typeIndex) {
         case TYPE_LIST_I32:
             return sizeof(i32);
@@ -1461,7 +1456,7 @@ void TypewriterDraw(void* _tw) {
     if (!tw->visible || tw->text == nullptr) {
         return;
     }
-    
+
     String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
     v2 textAlign = MeasureTextEx(
         tw->textDrawingStyle.font,
@@ -1529,7 +1524,6 @@ void DialogueOptionsDraw(void* _dopt) {
         return;
     }
 
-    String* options = dopt->options;
     v2* textSize = (v2*)malloc(dopt->count * sizeof(v2));
     v2 boxSize = {0.f, 0.f};
     // TODO: These measurements can be done as preprocessing. No need for the memory allocation every fucking frame
@@ -1549,10 +1543,9 @@ void DialogueOptionsDraw(void* _dopt) {
 
         String option = dopt->options[i];
         i32 x = dopt->x;
-        i32 y = dopt->y + i * ((i32)dopt->textStyle.size + dopt->optionSeparationAdd);
+        i32 y = dopt->y + i * (i32)(dopt->textStyle.size + dopt->optionSeparationAdd);
         float xf = (float)x;
         float yf = (float)y;
-        float boxHeightAdd = 24.f;
         rect2 dialogueBoxRect = {
             xf - boxSize.x / 2.f,
             yf - boxSize.y / 2.f - dopt->optionBoxHeightAdd / 2.f,
@@ -1649,9 +1642,7 @@ void DialogueSequenceDrawUi(void* _dseq) {
     DialogueOptionsDraw(&dseq->options);
     TypewriterDraw(&dseq->typewriter);
 }
-void DialogueSequenceFree(void* _dseq) {
-    DialogueSequence* dseq = (DialogueSequence*)_dseq;
-}
+
 DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind) {
     return (DialogueSequenceSection*)TypeListGetPtr(dseq->sections, ind);
 }
@@ -1694,20 +1685,19 @@ void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptio
 }
 
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info) {
-    const u32 resdiv = info.resdiv;
+    const i32 resdiv = info.resdiv;
     const Image *image = info.heightmapImage;
-    const u32 stride = PixelformatGetStride(image->format);
-    const u32 len = info.heightmapImage->width * info.heightmapImage->height;
-    const u32 heightDataWidth = image->width >> resdiv;
-    const u32 heightDataHeight = image->height >> resdiv;
+    const i32 stride = PixelformatGetStride(image->format);
+    const i32 heightDataWidth = image->width >> resdiv;
+    const i32 heightDataHeight = image->height >> resdiv;
 
     float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
     byte* data = (byte*)info.heightmapImage->data;
-    u32 dataW = heightDataWidth;
-    u32 imgw = image->width;
+    i32 dataW = heightDataWidth;
+    i32 imgw = image->width;
 
-    for (u32 x = 0; x < heightDataWidth; x++) {
-        for (u32 y = 0; y < heightDataHeight; y++) {
+    for (i32 x = 0; x < heightDataWidth; x++) {
+        for (i32 y = 0; y < heightDataHeight; y++) {
             byte value = data[((x << resdiv) + ((y << resdiv) * imgw)) * stride];
             heightData[x + y * dataW] = ((float)value / 255.f) * info.size.y;
         }
@@ -1727,8 +1717,8 @@ float HeightmapSampleHeight(Heightmap* hm, float x, float z) {
         v2 normpos = abspos / v2{hm->size.x, hm->size.z};
         v2 datapos = normpos * v2{(float)hm->heightDataWidth, (float)hm->heightDataHeight};
         v2 dataposFract = Vector2Fract(datapos);
-        u32 dataX = datapos.x;
-        u32 dataY = datapos.y;
+        i32 dataX = (i32)datapos.x;
+        i32 dataY = (i32)datapos.y;
         bool nextX = dataX + 1 < hm->heightDataWidth;
         bool nextY = dataY + 1 < hm->heightDataHeight;
         // TODO: Could probably just pad the data by 1 on the right and bottom
@@ -1774,7 +1764,7 @@ GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName) {
 void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material) {
     psys->_material = material;
     psys->_material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
-    psys->_quad = GenMeshPlane(1.f, 1.f, 1.f, 1);
+    psys->_quad = GenMeshPlane(1.f, 1.f, 1, 1);
     psys->_transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
     psys->count = 64;
     for (i32 i = 0; i < psys->count; i++) {
@@ -1818,7 +1808,7 @@ void TextureInstanceInit(TextureInstance* ti, Texture* tex) {
     ti->origin = {0.f, 0.f};
     ti->rotation = 0.f;
     ti->tint = WHITE;
-    
+
     ti->_drawSource = {0.f, 0.f, (float)tex->width, (float)tex->height};
     ti->_drawDestination = {0.f, 0.f, (float)tex->width, (float)tex->height};
     ti->_scale = {1.f, 1.f};

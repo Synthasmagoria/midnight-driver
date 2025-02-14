@@ -184,7 +184,7 @@ namespace resources {
         "silver.ttf",
         "mecha.png"
     };
-    const u32 fontSizes[FONT_COUNT] = {
+    const i32 fontSizes[FONT_COUNT] = {
         32,
         28
     };
@@ -520,16 +520,16 @@ InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGen
         return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
     }
     const v2 imageSize = {(float)image.width, (float)image.height};
-    const u32 treesMax = (u32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
-    u32 treeCount = 0;
+    const i32 treesMax = (i32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
+    i32 treeCount = 0;
     mat4 *transforms = (mat4*)RL_CALLOC(treesMax, sizeof(mat4));
     v2 pixelIncrF = imageSize / info.worldSize / info.density;
-    const u32 incrx = pixelIncrF.x < 1.f ? 1 : (u32)floorf(pixelIncrF.x);
-    const u32 incry = pixelIncrF.y < 1.f ? 1 : (u32)floorf(pixelIncrF.y);
+    const i32 incrx = pixelIncrF.x < 1.f ? 1 : (i32)floorf(pixelIncrF.x);
+    const i32 incry = pixelIncrF.y < 1.f ? 1 : (i32)floorf(pixelIncrF.y);
     const byte* imageData = (byte*)image.data;
-    for (u32 x = 0; x < image.width; x += incrx) {
-        for (u32 y = 0; y < image.height; y += incry) {
-            u32 i = (x + y * image.width) * stride;
+    for (i32 x = 0; x < image.width; x += incrx) {
+        for (i32 y = 0; y < image.height; y += incry) {
+            i32 i = (x + y * image.width) * stride;
             Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
             if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
                 v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
