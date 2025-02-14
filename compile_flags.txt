@@ -2,3 +2,5 @@
 -Iinclude
 -link
 -LIBPATH:lib
+-W4
+-Wno-misc-definitions-in-headers
