@@ -543,6 +543,14 @@ struct ParticleSystem;
 struct TextureInstance;
 struct Skybox;
 
+struct GameObjectDefinition {
+    void (*Update) (void*);
+    void (*Draw3d) (void*);
+    void (*DrawUi) (void*);
+    void (*Free) (void*);
+    void (*DrawImGui) (void*);
+    const char* objectName;
+};
 struct GameObject {
     void (*Update) (void*);
     void (*Draw3d) (void*);
@@ -554,6 +562,8 @@ struct GameObject {
     const char* instanceName;
     i32 id;
     static i32 idCounter;
+    bool visible;
+    bool active;
 };
 i32 GameObject::idCounter = 100000;
 GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName = "<unnamed>");
@@ -719,6 +729,7 @@ struct ModelInstance {
     float scale;
     Color tint;
 };
+ModelInstance* ModelInstanceCreate(MemoryPool* mp);
 void ModelInstanceDraw3d(void* _mi);
 void ModelInstanceDrawImGui(void* _mi);
 GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName = "<unnamed>");
@@ -1745,6 +1756,12 @@ GameObject InstanceMeshRenderDataPack(InstanceMeshRenderData* forest, const char
     return go;
 }
 
+ModelInstance* ModelInstanceCreate(MemoryPool* mp) {
+    ModelInstance* mi = MemoryReserve<ModelInstance>(mp);
+    mi->scale = 1.f;
+    mi->tint = WHITE;
+    return mi;
+}
 void ModelInstanceDraw3d(void* _mi) {
     ModelInstance *mi = (ModelInstance*)_mi;
     DrawModel(mi->model, mi->position, mi->scale, mi->tint);

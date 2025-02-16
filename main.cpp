@@ -53,7 +53,7 @@ struct Cab {
 
     bool meshVisible[10];
 };
-void CabInit(Cab* cab);
+Cab* CabCreate(MemoryPool* mp);
 void CabUpdate(void* cab);
 void CabDraw3d(void* cab);
 void CabDrawImGui(void* cab);
@@ -126,16 +126,12 @@ namespace resources {
         MODEL_CAB,
         MODEL_TREE,
         MODEL_LEVEL0,
-        MODEL_LEVEL1,
-        MODEL_CURVE_EXPORT_TEST,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "taxi.glb",
         "tree.glb",
-        "level0.glb",
-        "level1.glb",
-        "curve_export_test.glb"
+        "level0.glb"
     };
     Model models[MODEL_COUNT];
 
@@ -205,6 +201,24 @@ namespace debug {
     bool cursorEnabledPrevious = false;
     ImVec2 inspectorSize = ImVec2(300.f, global::screenHeight);
     ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, 0.f);
+
+    i32 currentObjectIndexSelection = -1;
+#define __MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH 64
+    char objectInstancingName[__MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH];
+    enum ObjectIndices {
+        CAB,
+        MODEL_INSTANCE,
+        _OBJECT_COUNT
+    };
+    const char* objectNames[_OBJECT_COUNT] = {
+        "Cab",
+        "Model Instance"
+    };
+    typedef void(*GameObjectPackingFunctionSignature)(void*, const char*);
+    GameObjectPackingFunctionSignature objectPackingFunctions[_OBJECT_COUNT] = {
+        (GameObjectPackingFunctionSignature)CabPack,
+        (GameObjectPackingFunctionSignature)ModelInstancePack
+    };
 }
 
 void LoadGameShaders();
@@ -252,17 +266,6 @@ i32 main() {
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
-
-    TypeList* list = TypeListCreate(TYPE_LIST_I32, &mdEngine::sceneMemory);
-    TypeListPushBackI32(list, 100);
-    TypeListPushBackI32(list, -4);
-    TypeListPushBackI32(list, 8);
-    TypeListPushBackI32(list, 5);
-    TypeListPushBackI32(list, 49);
-    TypeListPushBackI32(list, 154);
-    for (i32 i = 0; i < list->size; i++) {
-        i32 val = TypeListGetI32(list, i);
-    }
 
     global::currentCameraUi.offset = {0.f, 0.f};
     global::currentCameraUi.rotation = 0.f;
@@ -324,6 +327,97 @@ i32 main() {
     UnloadGameResources();
 
     return 0;
+}
+
+i32 SceneSetup01(GameObject* goOut) {
+    i32 goCount = 0;
+
+    Skybox* skybox = MemoryReserve<Skybox>(&mdEngine::sceneMemory);
+    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    skybox->shader = resources::shaders[resources::SHADER_SKYBOX];
+    {
+        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        i32 gammaValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        i32 vflippedValue = 0;
+        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    }
+    skybox->model.materials[0].shader = skybox->shader;
+    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        resources::images[resources::IMAGE_SKYBOX],
+        CUBEMAP_LAYOUT_AUTO_DETECT);
+    goOut[goCount] = SkyboxPack(skybox); goCount++;
+
+    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
+    mi->model = resources::models[resources::MODEL_LEVEL0];
+    mi->position = {0.f, 0.f, 0.f};
+    mi->scale = 1.f;
+    mi->tint = WHITE;
+    goOut[goCount] = ModelInstancePack(mi, "Terrain"); goCount++;
+    
+    BoundingBox bb = GetModelBoundingBox(mi->model);
+    HeightmapGenerationInfo hgi = {};
+    hgi.heightmapImage = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
+    hgi.position = bb.min;
+    hgi.size = bb.max - bb.min;
+    hgi.resdiv = 2;
+    Heightmap* hm = MemoryReserve<Heightmap>(&mdEngine::sceneMemory);
+    HeightmapInit(hm, hgi);
+    mdEngine::groups["terrainHeightmap"] = hm;
+
+    goOut[goCount] = CabPack(CabCreate(&mdEngine::sceneMemory)); goCount++;
+
+    CameraManager* camMan = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
+    CameraManagerInit(camMan, CameraGetDefault());
+    goOut[goCount] = CameraManagerPack(camMan); goCount++;
+
+    return goCount;
+};
+i32 SceneSetup_PriestReachout(GameObject* go) {
+    i32 goCount = 0;
+
+    {
+        ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
+        mi->model = resources::models[resources::MODEL_LEVEL0];
+        mi->position = {0.f, 0.f, 0.f};
+        mi->scale = 1.f;
+        mi->tint = WHITE;
+        GameObject obj = ModelInstancePack(mi, "Terrain");
+        go[goCount] = obj;
+        go++;
+    }
+
+    return goCount;
+}
+i32 SceneSetup_DialogueTest(GameObject* go) {
+    i32 goCount = 0;
+
+    DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&mdEngine::sceneMemory);
+    DialogueSequenceInit(dseq, 0);
+    go[goCount] = DialogueSequencePack(dseq);
+    goCount++;
+
+    return goCount;
+}
+i32 SceneSetup_ModelTest(GameObject* go) {
+    i32 goCount = 0;
+
+    CameraManager* cm = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
+    CameraManagerInit(cm, CameraGetDefault());
+    go[goCount] = CameraManagerPack(cm);
+    goCount++;
+
+    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
+    mi->model = LOAD_MODEL("level_prototypeB.glb");
+    //mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
+    mi->tint = WHITE;
+    mi->position = {0.f};
+    mi->scale = 1.f;
+    go[goCount] = ModelInstancePack(mi);
+    goCount++;
+
+    return goCount;
 }
 
 void LoadGameShaders() {
@@ -466,6 +560,14 @@ void DrawDebugImGui() {
         ImGui::Text(TextFormat("Local memory: %ib / %ib", &mdEngine::sceneMemory.location, &mdEngine::sceneMemory.size));
         ImGui::Text(TextFormat("Global memory: %ib / %ib", &mdEngine::persistentMemory.location, &mdEngine::persistentMemory.size));
     }
+    if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Combo("Object types", &debug::currentObjectIndexSelection, debug::objectNames, debug::_OBJECT_COUNT);
+        ImGui::InputText("Object Name", debug::objectInstancingName, __MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH);
+        if (ImGui::Button("Instantiate")) {
+
+        }
+    }
+    ImGui::ShowDemoWindow();
 }
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
@@ -558,7 +660,8 @@ InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGen
     return imrd;
 }
 
-void CabInit(Cab *cab) {
+Cab* CabCreate(MemoryPool* mp) {
+    Cab* cab = MemoryReserve<Cab>(mp);
     cab->model = resources::models[resources::MODEL_CAB];
     cab->frontSeatPosition = {-0.16f, 1.85f, -0.44f};
     cab->verticalOffset = -0.f;
@@ -577,6 +680,7 @@ void CabInit(Cab *cab) {
     cab->_speed = 0.f;
     cab->_turnAngle = 0.f;
     mdEngine::groups["cab"] = (void*)cab;
+    return cab;
 }
 void CabUpdate(void* _cab) {
     Cab* cab = (Cab*)_cab;
@@ -663,9 +767,7 @@ v3 CabGetFrontSeatPosition(Cab *cab) {
 }
 GameObject CabPack(Cab* cab, const char* instanceName) {
     GameObject go = GameObjectCreate(cab, "Cab", instanceName);
-    go.Update = CabUpdate;
-    go.Draw3d = CabDraw3d;
-    go.DrawImGui = CabDrawImGui;
+    
     return go;
 }
 
@@ -809,105 +911,4 @@ GameObject TextureInstance_PriestReachoutPack(TextureInstance_PriestReachout* ti
     GameObject go = GameObjectCreate(ti, "Texture Instance (Priest Reachout)", instanceName);
     go.DrawUi = TextureInstance_PriestReachoutDrawUi;
     return go;
-}
-
-i32 SceneSetup01(GameObject* goOut) {
-    i32 goCount = 0;
-
-    Skybox* skybox = MemoryReserve<Skybox>(&mdEngine::sceneMemory);
-    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    skybox->shader = resources::shaders[resources::SHADER_SKYBOX];
-    {
-        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-        i32 gammaValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-        i32 vflippedValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-    }
-    skybox->model.materials[0].shader = skybox->shader;
-    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        resources::images[resources::IMAGE_SKYBOX],
-        CUBEMAP_LAYOUT_AUTO_DETECT);
-    goOut[goCount] = SkyboxPack(skybox); goCount++;
-
-    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
-    mi->model = resources::models[resources::MODEL_LEVEL1];
-    mi->position = {0.f, 0.f, 0.f};
-    mi->scale = 1.f;
-    mi->tint = WHITE;
-    goOut[goCount] = ModelInstancePack(mi, "Terrain"); goCount++;
-    
-    BoundingBox bb = GetModelBoundingBox(mi->model);
-    HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
-    hgi.position = bb.min;
-    hgi.size = bb.max - bb.min;
-    hgi.resdiv = 2;
-    Heightmap* hm = MemoryReserve<Heightmap>(&mdEngine::sceneMemory);
-    HeightmapInit(hm, hgi);
-    mdEngine::groups["terrainHeightmap"] = hm;
-
-    Cab* cab = MemoryReserve<Cab>(&mdEngine::sceneMemory);
-    CabInit(cab);
-    goOut[goCount] = CabPack(cab); goCount++;
-
-    CameraManager* camMan = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
-    CameraManagerInit(camMan, CameraGetDefault());
-    goOut[goCount] = CameraManagerPack(camMan); goCount++;
-
-    return goCount;
-};
-i32 SceneSetup_PriestReachout(GameObject* go) {
-    i32 goCount = 0;
-
-    TextureInstance* ti = MemoryReserve<TextureInstance>(&mdEngine::sceneMemory);
-    TextureInstanceInit(ti, &resources::textures[resources::TEXTURE_REACHOUT_BACKGROUND]);
-    TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-    go[goCount] = TextureInstancePack(ti);
-    goCount++;
-
-    TextureInstance* ti2 = MemoryReserve<TextureInstance>(&mdEngine::sceneMemory);
-    TextureInstanceInit(ti2, &resources::textures[resources::TEXTURE_REACHOUT_PRIEST]);
-    TextureInstanceSetSize(ti2, {(float)global::screenWidth, (float)global::screenHeight});
-    TextureInstance_PriestReachout* tipr = MemoryReserve<TextureInstance_PriestReachout>(&mdEngine::sceneMemory);
-    tipr->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_2D];
-    tipr->noiseTexture = &resources::textures[resources::TEXTURE_FBM_VALUE_OCT5_128];
-    tipr->textureInstance = ti2;
-    tipr->frequency = 0.2f;
-    tipr->color_a = ColorToShaderColor({125, 0, 86, 255});
-    tipr->color_b = ColorToShaderColor({9, 0, 42, 255});
-    go[goCount] = TextureInstance_PriestReachoutPack(tipr);
-    goCount++;
-
-    return goCount;
-}
-i32 SceneSetup_DialogueTest(GameObject* go) {
-    i32 goCount = 0;
-
-    DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&mdEngine::sceneMemory);
-    DialogueSequenceInit(dseq, 0);
-    go[goCount] = DialogueSequencePack(dseq);
-    goCount++;
-
-    return goCount;
-}
-i32 SceneSetup_ModelTest(GameObject* go) {
-    i32 goCount = 0;
-
-    CameraManager* cm = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
-    CameraManagerInit(cm, CameraGetDefault());
-    go[goCount] = CameraManagerPack(cm);
-    goCount++;
-
-    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
-    mi->model = LOAD_MODEL("level_prototypeB.glb");
-    //mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
-    mi->tint = WHITE;
-    mi->position = {0.f};
-    mi->scale = 1.f;
-    go[goCount] = ModelInstancePack(mi);
-    goCount++;
-
-    return goCount;
 }
