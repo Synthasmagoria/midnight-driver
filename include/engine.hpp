@@ -672,7 +672,6 @@ void TypewriterUpdate(void* tw);
 void TypewriterDraw(void* tw);
 void TypewriterEvent_LineComplete(Typewriter* tw);
 void TypewriterStart(Typewriter* tw, String* str, i32 strCount);
-GameObject TypewriterPack(Typewriter* tw, const char* instanceName = "<unnamed>");
 // TODO: Encapsulate this functionality in a signal processing structure
 void _TypewriterAdvanceText(Typewriter *tw);
 void _TypewriterReset(Typewriter *tw);
@@ -694,7 +693,6 @@ void DialogueOptionsInit(DialogueOptions* dopt);
 void DialogueOptionsHandleInput(DialogueOptions* dialogueOptions);
 void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
-GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName = "<unnamed>");
 
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
@@ -722,7 +720,6 @@ struct InstanceMeshRenderData {
     Material material;
 };
 void InstanceMeshRenderDataDraw3d(void* _imrd);
-GameObject InstanceMeshRenderDataPack(InstanceMeshRenderData* forest, const char* instanceName);
 
 
 
@@ -746,7 +743,6 @@ void* DialogueSequenceCreate(MemoryPool* mp);
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDrawUi(void* _dseq);
-GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName = "<unnamed>");
 void DialogueSequenceStartSection(i32 ind);
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
@@ -767,7 +763,6 @@ struct ModelInstance {
 void* ModelInstanceCreate(MemoryPool* mp);
 void ModelInstanceDraw3d(void* _mi);
 void ModelInstanceDrawImGui(void* _mi);
-GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName = "<unnamed>");
 
 #define PARTICLE_SYSTEM_MAX_PARTICLES 512
 struct ParticleSystem {
@@ -781,7 +776,6 @@ void* ParticleSystemCreate(MemoryPool* mp);
 void ParticleSystemFree(void* psys);
 void ParticleSystemUpdate(void* psys);
 void ParticleSystemDraw3d(void* psys);
-GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName = "<unnamed>");
 
 struct TextureInstance {
     Texture* texture;
@@ -797,7 +791,6 @@ struct TextureInstance {
 void* TextureInstanceCreate(MemoryPool* mp);
 void TextureInstanceDrawUi(void* _ti);
 void TextureInstanceSetSize(TextureInstance* ti, v2 size);
-GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName = "<unnamed>");
 
 struct Skybox {
     Model model;
@@ -805,7 +798,6 @@ struct Skybox {
 };
 void* SkyboxCreate(MemoryPool* mp);
 void SkyboxDraw3d(void* _skybox);
-GameObject SkyboxPack(Skybox* skybox);
 /*
     Engine dependent utility definitions
 */
@@ -1669,12 +1661,6 @@ void TypewriterDraw(void* _tw) {
     DrawTextPro(tw->textDrawingStyle.font, substr.cstr, {truncf((float)tw->x), truncf((float)tw->y)}, textAlign, 0.f, tw->textDrawingStyle.size, 1.f, WHITE);
     StringDestroy(substr);
 }
-GameObject TypewriterPack(Typewriter* tw, const char* instanceName) {
-    GameObject go = GameObjectCreate(tw, "Typewriter", instanceName);
-    go.Update = TypewriterUpdate;
-    go.DrawUi = TypewriterDraw;
-    return go;
-}
 void TypewriterEvent_LineComplete(Typewriter* tw) {
     EventArgs_TypewriterLineComplete args;
     args.lineCurrent = tw->textIndex;
@@ -1773,13 +1759,6 @@ void DialogueOptionsDraw(void* _dopt) {
     }
     free(textSize);
 }
-GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName) {
-    GameObject go = GameObjectCreate(dopt, "Dialogue Options", instanceName);
-    go.data = dopt;
-    go.Update = DialogueOptionsUpdate;
-    go.DrawUi = DialogueOptionsDraw;
-    return go;
-}
 
 void* DialogueSequenceCreate(MemoryPool* mp) {
     DialogueSequence* dseq = MemoryReserve<DialogueSequence>(mp);
@@ -1861,13 +1840,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     dss->link = TypeListCreate(TYPE_LIST_PTR, &mdEngine::sceneMemory);
     return dss;
 }
-GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName) {
-    GameObject go = GameObjectCreate(dseq, "Dialogue Sequence", instanceName);
-    go.data = dseq;
-    go.Update = DialogueSequenceUpdate;
-    go.DrawUi = DialogueSequenceDrawUi;
-    return go;
-}
+
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
     DialogueSequence* dseq = (DialogueSequence*)_dseq;
     EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
@@ -1945,11 +1918,6 @@ void InstanceMeshRenderDataDraw3d(void* _imrd) {
     InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
     DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
 }
-GameObject InstanceMeshRenderDataPack(InstanceMeshRenderData* forest, const char* instanceName = "<unnamed>") {
-    GameObject go = GameObjectCreate(forest, "Forest Manager", instanceName);
-    go.Draw3d = InstanceMeshRenderDataDraw3d;
-    return go;
-}
 
 void* ModelInstanceCreate(MemoryPool* mp) {
     ModelInstance* mi = MemoryReserve<ModelInstance>(mp);
@@ -1965,12 +1933,6 @@ void ModelInstanceDrawImGui(void* _mi) {
     ModelInstance* mi = (ModelInstance*)_mi;
     ImGui::DragFloat3("Position", (float*)&mi->position, 0.05f);
     ImGui::DragFloat("Scale", (float*)&mi->scale, 0.05f);
-}
-GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName) {
-    GameObject go = GameObjectCreate(mi, "Model Instance", instanceName);
-    go.Draw3d = ModelInstanceDraw3d;
-    go.DrawImGui = ModelInstanceDrawImGui;
-    return go;
 }
 
 void* ParticleSystemCreate(MemoryPool* mp) {
@@ -2003,13 +1965,6 @@ void ParticleSystemDraw3d(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
     DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
 }
-GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName) {
-    GameObject go = GameObjectCreate(psys, "Particle System", instanceName);
-    go.Update = ParticleSystemUpdate;
-    go.Draw3d = ParticleSystemDraw3d;
-    go.Free = ParticleSystemFree;
-    return go;
-}
 
 void* TextureInstanceCreate(MemoryPool* mp) {
     TextureInstance* ti = MemoryReserve<TextureInstance>(mp);
@@ -2032,11 +1987,6 @@ void TextureInstanceDrawUi(void* _ti) {
     TextureInstance* ti = (TextureInstance*)_ti;
     DrawTexturePro(*ti->texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->rotation, ti->tint);
 }
-GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName) {
-    GameObject go = GameObjectCreate(ti, "Texture Instance", instanceName);
-    go.DrawUi = TextureInstanceDrawUi;
-    return go;
-}
 
 void* SkyboxCreate(MemoryPool* mp) {
     Skybox* sb = MemoryReserve<Skybox>(mp);
@@ -2049,10 +1999,5 @@ void SkyboxDraw3d(void* _skybox) {
         DrawModel(skybox->model, {0.f}, 1.0f, WHITE);
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
-}
-GameObject SkyboxPack(Skybox* sb) {
-    GameObject go = GameObjectCreate(sb, "Skybox");
-    go.Draw3d = SkyboxDraw3d;
-    return go;
 }
 #endif // __MD_ENGINE_H

@@ -18,11 +18,9 @@
 /*
     Game objects
 */
-enum MD_GAME_OBJECTS_CUSTOM {
-    OBJECT_CAB = _MD_GAME_ENGINE_OBJECTS_COUNT,
-};
 
 struct Cab;
+struct CameraManager;
 
 struct Cab {
     Model model;
@@ -56,7 +54,24 @@ void CabUpdate(void* cab);
 void CabDraw3d(void* cab);
 void CabDrawImGui(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
-GameObject CabPack(Cab* cab, const char* instanceName = "<unnamed>");
+
+struct CameraManager {
+    Camera playerCamera;
+    Camera debugCamera;
+    float debugCameraSpeed;
+    i32 cameraMode;
+};
+void* CameraManagerCreate(MemoryPool* mp);
+void CameraManagerUpdate(void* _camMan);
+void CameraManagerDrawUi(void* _camMan);
+void CameraManagerFree(void* _camMan);
+
+void CameraUpdateDebug(Camera* camera, float speed);
+void CameraUpdateCab(Camera* camera, Cab* cab);
+v3 GetCameraForwardNorm(Camera* camera);
+v3 GetCameraUpNorm(Camera* camera);
+v3 GetCameraRightNorm(Camera* camera);
+Camera CameraGetDefault();
 
 /*
 
@@ -73,24 +88,6 @@ struct ForestGenerationInfo {
 };
 InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
-struct CameraManager {
-    Camera playerCamera;
-    Camera debugCamera;
-    float debugCameraSpeed;
-    i32 cameraMode;
-};
-void CameraManagerInit(CameraManager* camMan, Camera playerCamera);
-void CameraManagerUpdate(void* _camMan);
-void CameraManagerDrawUi(void* _camMan);
-GameObject CameraManagerPack(CameraManager* camMan, const char* instanceName = "<unnamed>");
-
-void CameraUpdateDebug(Camera* camera, float speed);
-void CameraUpdateCab(Camera* camera, Cab* cab);
-v3 GetCameraForwardNorm(Camera* camera);
-v3 GetCameraUpNorm(Camera* camera);
-v3 GetCameraRightNorm(Camera* camera);
-Camera CameraGetDefault();
-
 // TODO: Make this reusable
 struct TextureInstance_PriestReachout {
     TextureInstance* textureInstance;
@@ -102,7 +99,6 @@ struct TextureInstance_PriestReachout {
     float time;
 };
 void TextureInstance_PriestReachoutDrawUi(void* _ti);
-GameObject TextureInstance_PriestReachoutPack(TextureInstance_PriestReachout* ti, const char* instanceName = "<unnamed>");
 
 namespace resources {
     enum GAME_SHADERS {
@@ -235,6 +231,10 @@ void MdDebugInit() {
     debug::instanceableObjectNames = sb.str;
 }
 
+enum MD_GAME_OBJECTS_CUSTOM {
+    OBJECT_CAB = _MD_GAME_ENGINE_OBJECTS_COUNT,
+    OBJECT_CAMERA_MANAGER
+};
 void MdGameRegisterObjects() {
     GameObjectDefinition def;
     MemoryPool* mp = &mdEngine::engineMemory;
@@ -244,6 +244,12 @@ void MdGameRegisterObjects() {
     def.DrawImGui = CabDrawImGui;
     def.Update = CabUpdate;
     MdEngineRegisterObject(def, OBJECT_CAB);
+
+    def = GameObjectDefinitionCreate("Camera Manager", CameraManagerCreate, mp);
+    def.Update = CameraManagerUpdate;
+    def.DrawUi = CameraManagerDrawUi;
+    def.Free = CameraManagerFree;
+    MdEngineRegisterObject(def, OBJECT_CAMERA_MANAGER);
 }
 
 void MdGameInit() {
@@ -283,8 +289,6 @@ void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
 i32 SceneSetup01(GameObject* goOut);
 i32 SceneSetup_PriestReachout(GameObject* go);
-i32 SceneSetup_DialogueTest(GameObject* go);
-i32 SceneSetup_ModelTest(GameObject* go);
 
 i32 main() {
     SetTraceLogLevel(4);
@@ -300,7 +304,7 @@ i32 main() {
     MdDebugInit();
 
     GameObject gameObject[GAME_OBJECT_MAX];
-    i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
+    i32 gameObjectCount = SceneSetup01(gameObject);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -361,91 +365,60 @@ i32 main() {
 
 i32 SceneSetup01(GameObject* goOut) {
     i32 goCount = 0;
+    MemoryPool* mp = &mdEngine::sceneMemory;
 
-    Skybox* skybox = MemoryReserve<Skybox>(&mdEngine::sceneMemory);
-    skybox->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-    skybox->shader = resources::shaders[resources::SHADER_SKYBOX];
     {
-        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-        i32 gammaValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-        i32 vflippedValue = 0;
-        SetShaderValue(skybox->shader, GetShaderLocation(skybox->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_SKYBOX, mp);
+        Skybox* sb = (Skybox*)obj.data;
+        goOut[goCount] = obj; goCount++;
+
+        sb->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+        sb->shader = resources::shaders[resources::SHADER_SKYBOX];
+        {
+            i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+            i32 gammaValue = 0;
+            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+            i32 vflippedValue = 0;
+            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+        }
+        sb->model.materials[0].shader = sb->shader;
+        sb->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+            resources::images[resources::IMAGE_SKYBOX],
+            CUBEMAP_LAYOUT_AUTO_DETECT);
     }
-    skybox->model.materials[0].shader = skybox->shader;
-    skybox->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-        resources::images[resources::IMAGE_SKYBOX],
-        CUBEMAP_LAYOUT_AUTO_DETECT);
-    goOut[goCount] = SkyboxPack(skybox); goCount++;
 
-    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
-    mi->model = resources::models[resources::MODEL_LEVEL0];
-    mi->position = {0.f, 0.f, 0.f};
-    mi->scale = 1.f;
-    mi->tint = WHITE;
-    goOut[goCount] = ModelInstancePack(mi, "Terrain"); goCount++;
+    {
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
+        ModelInstance* mi = (ModelInstance*)obj.data;
+        mi->model = resources::models[resources::MODEL_LEVEL0];
+        goOut[goCount] = obj; goCount++;
+    }
     
-    BoundingBox bb = GetModelBoundingBox(mi->model);
-    HeightmapGenerationInfo hgi = {};
-    hgi.heightmapImage = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
-    hgi.position = bb.min;
-    hgi.size = bb.max - bb.min;
-    hgi.resdiv = 2;
-    Heightmap* hm = MemoryReserve<Heightmap>(&mdEngine::sceneMemory);
-    HeightmapInit(hm, hgi);
-    mdEngine::groups["terrainHeightmap"] = hm;
+    goOut[goCount] = MdEngineInstanceGameObject(OBJECT_CAB, mp); goCount++;
 
-    goOut[goCount] = CabPack((Cab*)CabCreate(&mdEngine::sceneMemory)); goCount++;
-
-    CameraManager* camMan = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
-    CameraManagerInit(camMan, CameraGetDefault());
-    goOut[goCount] = CameraManagerPack(camMan); goCount++;
+    {
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, &mdEngine::sceneMemory);
+        goOut[goCount] = obj;
+        goCount++;
+    }
 
     return goCount;
 };
 i32 SceneSetup_PriestReachout(GameObject* go) {
     i32 goCount = 0;
+    MemoryPool* mp = &mdEngine::sceneMemory;
 
     {
-        ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
+        ModelInstance* mi = (ModelInstance*)obj.data;
         mi->model = resources::models[resources::MODEL_LEVEL0];
         mi->position = {0.f, 0.f, 0.f};
         mi->scale = 1.f;
         mi->tint = WHITE;
-        GameObject obj = ModelInstancePack(mi, "Terrain");
         go[goCount] = obj;
-        go++;
+        goCount++;
     }
-
-    return goCount;
-}
-i32 SceneSetup_DialogueTest(GameObject* go) {
-    i32 goCount = 0;
-
-    //DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&mdEngine::sceneMemory);
-    //DialogueSequenceCreate(dseq, 0);
-    //go[goCount] = DialogueSequencePack(dseq);
-    //goCount++;
-
-    return goCount;
-}
-i32 SceneSetup_ModelTest(GameObject* go) {
-    i32 goCount = 0;
-
-    CameraManager* cm = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
-    CameraManagerInit(cm, CameraGetDefault());
-    go[goCount] = CameraManagerPack(cm);
-    goCount++;
-
-    ModelInstance* mi = MemoryReserve<ModelInstance>(&mdEngine::sceneMemory);
-    mi->model = LOAD_MODEL("level_prototypeB.glb");
-    //mi->model.materials[0] = global::materials[global::MATERIAL_LIT];
-    mi->tint = WHITE;
-    mi->position = {0.f};
-    mi->scale = 1.f;
-    go[goCount] = ModelInstancePack(mi);
-    goCount++;
 
     return goCount;
 }
@@ -800,18 +773,16 @@ void CabDrawImGui(void* _cab) {
 v3 CabGetFrontSeatPosition(Cab *cab) {
     return cab->frontSeatPosition * cab->_transform;
 }
-GameObject CabPack(Cab* cab, const char* instanceName) {
-    GameObject go = GameObjectCreate(cab, "Cab", instanceName);
-    return go;
-}
 
-void CameraManagerInit(CameraManager* camMan, Camera playerCamera) {
-    camMan->playerCamera = playerCamera;
+void* CameraManagerCreate(MemoryPool* mp) {
+    CameraManager* camMan = MemoryReserve<CameraManager>(mp);
+    camMan->playerCamera = CameraGetDefault();
     camMan->debugCamera = {};
     camMan->debugCamera.fovy = 60.f;
     camMan->debugCamera.up = {0.f, 1.f, 0.f};
     camMan->debugCameraSpeed = 0.1f;
     global::currentCamera = &camMan->playerCamera;
+    return camMan;
 }
 void CameraManagerUpdate(void* _camMan) {
     CameraManager* camMan = (CameraManager*)_camMan;
@@ -850,13 +821,6 @@ void CameraManagerFree(void* _camMan) {
     if (global::currentCamera == &camMan->debugCamera || global::currentCamera == &camMan->playerCamera) {
         global::currentCamera = nullptr;
     }
-}
-GameObject CameraManagerPack(CameraManager* cm, const char* instanceName) {
-    GameObject go = GameObjectCreate(cm, "Camera Manager", instanceName);
-    go.Update = CameraManagerUpdate;
-    go.DrawUi = CameraManagerDrawUi;
-    go.Free = CameraManagerFree;
-    return go;
 }
 void CameraUpdateCab(Camera* camera, Cab* cab) {
     v3 frontSeatPosition = CabGetFrontSeatPosition(cab);
@@ -940,9 +904,4 @@ void TextureInstance_PriestReachoutDrawUi(void* _ti) {
     BeginShaderMode(shd);
     TextureInstanceDrawUi(ti->textureInstance);
     EndShaderMode();
-}
-GameObject TextureInstance_PriestReachoutPack(TextureInstance_PriestReachout* ti, const char* instanceName) {
-    GameObject go = GameObjectCreate(ti, "Texture Instance (Priest Reachout)", instanceName);
-    go.DrawUi = TextureInstance_PriestReachoutDrawUi;
-    return go;
 }
