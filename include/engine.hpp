@@ -26,7 +26,6 @@
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
-#define GAME_OBJECT_MAX 1000
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
@@ -634,6 +633,7 @@ TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5
 i32 TypeListTypeGetSize(i32 typeIndex);
 void TypeListSetCapacity(TypeList* list, i32 capacity);
 void TypeListGrowCapacityIfLimitReached(TypeList* list);
+void TypeListResize(TypeList* list, i32 size);
 void TypeListPushBackI32(TypeList* list, i32 val);
 i32 TypeListGetI32(TypeList* list, i32 ind);
 void TypeListSetI32(TypeList* list, i32 ind, i32 val);
@@ -806,7 +806,7 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm);
 /*
     Init
 */
-#define _MD_GAME_OBJECT_COUNT_MAX 500
+#define _MD_GAME_ENGINE_OBJECT_COUNT_MAX 500
 
 namespace mdEngine {
     bool initialized = false;
@@ -818,8 +818,8 @@ namespace mdEngine {
     Input input;
     Texture missingTexture;
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
-    GameObjectDefinition gameObjectDefinitions[_MD_GAME_OBJECT_COUNT_MAX];
-    bool gameObjectIsDefined[_MD_GAME_OBJECT_COUNT_MAX];
+    GameObjectDefinition gameObjectDefinitions[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
+    bool gameObjectIsDefined[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
 };
 
 enum MD_GAME_ENGINE_OBJECTS {
@@ -832,7 +832,7 @@ enum MD_GAME_ENGINE_OBJECTS {
 };
 
 void MdEngineRegisterObject(GameObjectDefinition def, i32 ind) {
-    assert(ind < _MD_GAME_OBJECT_COUNT_MAX);
+    assert(ind < _MD_GAME_ENGINE_OBJECT_COUNT_MAX);
     assert(!mdEngine::gameObjectIsDefined[ind]);
     mdEngine::gameObjectDefinitions[ind] = def;
     mdEngine::gameObjectIsDefined[ind] = true;
@@ -1496,6 +1496,14 @@ void TypeListGrowCapacityIfLimitReached(TypeList* list) {
             TypeListSetCapacity(list, list->capacity * 5);
         }
     }
+}
+void TypeListResize(TypeList* list, i32 size) {
+    if (size > list->capacity) {
+        TypeListSetCapacity(list, size);
+    } else if (size < list->size) {
+        memset((void*)((byte*)list->buffer + size), 0, list->size - size);
+    }
+    list->size = size;
 }
 void TypeListPushBackI32(TypeList* list, i32 val) {
     assert(list->typeIndex == TYPE_LIST_I32);

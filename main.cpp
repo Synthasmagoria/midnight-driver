@@ -201,6 +201,10 @@ namespace global {
     Camera2D currentCameraUi = {};
     const i32 screenWidth = 1440;
     const i32 screenHeight = 800;
+    // TODO: Turn this into an array of sorts
+    constexpr i32 GAME_OBJECT_MAX = 1000;
+    GameObject gameObjects[GAME_OBJECT_MAX];
+    i32 gameObjectCount;
 };
 
 namespace debug {
@@ -210,15 +214,26 @@ namespace debug {
     bool cursorEnabledPrevious = false;
     ImVec2 inspectorSize = ImVec2(300.f, global::screenHeight);
     ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, 0.f);
-
-    i32 currentObjectIndexSelection = -1;
+    constexpr i32 instanceableObjectInstanceNameMaxLength = 64;
+    char instanceableObjectInstanceName[instanceableObjectInstanceNameMaxLength];
+    i32 instanceableObjectSelection = -1;
     const char* instanceableObjectNames;
+    TypeList* instanceableObjectIndices;
+}
+
+void MdGameObjectAdd(GameObject* gameObjects, i32* gameObjectCount, GameObject obj) {
+    gameObjects[*gameObjectCount] = obj;
+    (*gameObjectCount)++;
 }
 
 void MdDebugInit() {
+    debug::instanceableObjectIndices = TypeListCreate(
+        TYPE_LIST_I32,
+        &mdEngine::engineMemory,
+        _MD_GAME_ENGINE_OBJECT_COUNT_MAX);
     StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
     sb.separator = '\0';
-    for (i32 i = 0; i < _MD_GAME_OBJECT_COUNT_MAX; i++) {
+    for (i32 i = 0; i < _MD_GAME_ENGINE_OBJECT_COUNT_MAX; i++) {
         if (!mdEngine::gameObjectIsDefined[i]) {
             continue;
         }
@@ -226,6 +241,8 @@ void MdDebugInit() {
         if (StringBuilderAddString(&sb, def.objectName) != 0) {
             TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
             break;
+        } else {
+            TypeListPushBackI32(debug::instanceableObjectIndices, i);
         }
     }
     debug::instanceableObjectNames = sb.str;
@@ -279,7 +296,7 @@ void UnloadGameResources();
 
 void DrawDebug3d();
 void DrawDebugUi();
-void DrawDebugImGui();
+void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount);
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
@@ -287,8 +304,8 @@ void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
-i32 SceneSetup01(GameObject* goOut);
-i32 SceneSetup_PriestReachout(GameObject* go);
+void SceneSetup01(GameObject* go, i32* count);
+void SceneSetup_PriestReachout(GameObject* go, i32* count);
 
 i32 main() {
     SetTraceLogLevel(4);
@@ -303,8 +320,7 @@ i32 main() {
     MdGameInit();
     MdDebugInit();
 
-    GameObject gameObject[GAME_OBJECT_MAX];
-    i32 gameObjectCount = SceneSetup01(gameObject);
+    SceneSetup01(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -317,7 +333,7 @@ i32 main() {
             debug::cursorEnabled = !debug::cursorEnabled;
         }
 
-        GameObjectsUpdate(gameObject, gameObjectCount);
+        GameObjectsUpdate(global::gameObjects, global::gameObjectCount);
 
         if (global::currentCamera != nullptr) {
             UpdateGameMaterials(global::currentCamera->position);
@@ -329,22 +345,22 @@ i32 main() {
         ClearBackground(BLACK);
         if (global::currentCamera != nullptr) {
             BeginMode3D(*global::currentCamera);
-                GameObjectsDraw3d(gameObject, gameObjectCount);
+                GameObjectsDraw3d(global::gameObjects, global::gameObjectCount);
                 if (debug::overlayEnabled) {
                     DrawDebug3d();
                 }
             EndMode3D();
         }
         BeginMode2D(global::currentCameraUi);
-        GameObjectsDrawUi(gameObject, gameObjectCount);
+        GameObjectsDrawUi(global::gameObjects, global::gameObjectCount);
         EndMode2D();
         if (debug::overlayEnabled) {
             DrawDebugUi();
             rlImGuiBegin();
             ImGui::SetWindowPos(debug::inspectorPosition);
             ImGui::SetWindowSize(debug::inspectorSize);
-            DrawDebugImGui();
-            GameObjectsDrawImGui(gameObject, gameObjectCount);
+            DebugHandleImGui(global::gameObjects, &global::gameObjectCount);
+            GameObjectsDrawImGui(global::gameObjects, global::gameObjectCount);
             rlImGuiEnd();
         }
         if (!debug::cursorEnabled) {
@@ -355,7 +371,7 @@ i32 main() {
         EndDrawing();
     }
 
-    GameObjectsFree(gameObject, gameObjectCount);
+    GameObjectsFree(global::gameObjects, global::gameObjectCount);
     MemoryPoolDestroy(&mdEngine::sceneMemory);
     MemoryPoolDestroy(&mdEngine::persistentMemory);
     UnloadGameResources();
@@ -363,14 +379,12 @@ i32 main() {
     return 0;
 }
 
-i32 SceneSetup01(GameObject* goOut) {
-    i32 goCount = 0;
+void SceneSetup01(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
-
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_SKYBOX, mp);
         Skybox* sb = (Skybox*)obj.data;
-        goOut[goCount] = obj; goCount++;
+        MdGameObjectAdd(go, count, obj);
 
         sb->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
         sb->shader = resources::shaders[resources::SHADER_SKYBOX];
@@ -387,28 +401,17 @@ i32 SceneSetup01(GameObject* goOut) {
             resources::images[resources::IMAGE_SKYBOX],
             CUBEMAP_LAYOUT_AUTO_DETECT);
     }
-
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
         ModelInstance* mi = (ModelInstance*)obj.data;
         mi->model = resources::models[resources::MODEL_LEVEL0];
-        goOut[goCount] = obj; goCount++;
+        MdGameObjectAdd(go, count, obj);
     }
-    
-    goOut[goCount] = MdEngineInstanceGameObject(OBJECT_CAB, mp); goCount++;
-
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, &mdEngine::sceneMemory);
-        goOut[goCount] = obj;
-        goCount++;
-    }
-
-    return goCount;
+    MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAB, mp));
+    MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, &mdEngine::sceneMemory));
 };
-i32 SceneSetup_PriestReachout(GameObject* go) {
-    i32 goCount = 0;
+void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
-
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
         ModelInstance* mi = (ModelInstance*)obj.data;
@@ -416,11 +419,8 @@ i32 SceneSetup_PriestReachout(GameObject* go) {
         mi->position = {0.f, 0.f, 0.f};
         mi->scale = 1.f;
         mi->tint = WHITE;
-        go[goCount] = obj;
-        goCount++;
+        MdGameObjectAdd(go, count, obj);
     }
-
-    return goCount;
 }
 
 void LoadGameShaders() {
@@ -558,7 +558,7 @@ void DrawDebug3d() {
 void DrawDebugUi() {
     DrawCrosshair(global::screenWidth / 2, global::screenHeight / 2, WHITE);
 }
-void DrawDebugImGui() {
+void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
     if (ImGui::CollapsingHeader("General info", ImGuiTreeNodeFlags_DefaultOpen)) {
         // TODO: TextFormat Text expired
         // TODO: Add remaining memory pools
@@ -573,7 +573,13 @@ void DrawDebugImGui() {
             &mdEngine::persistentMemory.size));
     }
     if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Combo("Objects", &debug::currentObjectIndexSelection, debug::instanceableObjectNames);
+        ImGui::Combo("Objects", &debug::instanceableObjectSelection, debug::instanceableObjectNames);
+        ImGui::InputText("Instance name", debug::instanceableObjectInstanceName, debug::instanceableObjectInstanceNameMaxLength);
+        if (ImGui::Button("Instance")) {
+            i32 objectIndex = TypeListGetI32(debug::instanceableObjectIndices, debug::instanceableObjectSelection);
+            GameObject obj = MdEngineInstanceGameObject(objectIndex, &mdEngine::sceneMemory);
+            MdGameObjectAdd(gameObjects, gameObjectCount, obj);
+        }
     }
     ImGui::ShowDemoWindow();
 }
