@@ -1,3 +1,4 @@
+#include <cstring>
 #define NO_FONT_AWESOME
 
 #include "raylib/raylib.h"
@@ -203,22 +204,20 @@ namespace debug {
     ImVec2 inspectorPosition = ImVec2(global::screenWidth - 300.f, 0.f);
 
     i32 currentObjectIndexSelection = -1;
-#define __MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH 64
-    char objectInstancingName[__MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH];
-    enum ObjectIndices {
-        CAB,
-        MODEL_INSTANCE,
-        _OBJECT_COUNT
-    };
-    const char* objectNames[_OBJECT_COUNT] = {
-        "Cab",
-        "Model Instance"
-    };
-    typedef void(*GameObjectPackingFunctionSignature)(void*, const char*);
-    GameObjectPackingFunctionSignature objectPackingFunctions[_OBJECT_COUNT] = {
-        (GameObjectPackingFunctionSignature)CabPack,
-        (GameObjectPackingFunctionSignature)ModelInstancePack
-    };
+    const char* instanceableObjectNames;
+}
+
+void DebugInit() {
+    StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
+    sb.separator = '\0';
+    for (i32 i = 0; i < mdEngine::gameObjectDefinitions->size; i++) {
+        GameObjectDefinition* def = TypeListGetGameObjectDefinition(mdEngine::gameObjectDefinitions, i);
+        if (StringBuilderAddString(&sb, def->objectName) != 0) {
+            TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
+            break;
+        }
+    }
+    debug::instanceableObjectNames = sb.str;
 }
 
 void LoadGameShaders();
@@ -262,7 +261,7 @@ i32 main() {
 
     LoadGameResources();
     MdEngineInit(1 << 16);
-    InputInit(&mdEngine::input);
+    DebugInit();
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
@@ -557,15 +556,20 @@ void DrawDebugUi() {
 }
 void DrawDebugImGui() {
     if (ImGui::CollapsingHeader("General info", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text(TextFormat("Local memory: %ib / %ib", &mdEngine::sceneMemory.location, &mdEngine::sceneMemory.size));
-        ImGui::Text(TextFormat("Global memory: %ib / %ib", &mdEngine::persistentMemory.location, &mdEngine::persistentMemory.size));
+        // TODO: TextFormat Text expired
+        // TODO: Add remaining memory pools
+        // TODO: Add bar instead of text (or both)
+        ImGui::Text(TextFormat(
+            "Local memory: %ub / %ub",
+            &mdEngine::sceneMemory.location,
+            &mdEngine::sceneMemory.size));
+        ImGui::Text(
+            TextFormat("Global memory: %ub / %ub",
+            &mdEngine::persistentMemory.location,
+            &mdEngine::persistentMemory.size));
     }
     if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Combo("Object types", &debug::currentObjectIndexSelection, debug::objectNames, debug::_OBJECT_COUNT);
-        ImGui::InputText("Object Name", debug::objectInstancingName, __MD_DEBUG_OBJECT_INSTANCING_NAME_MAX_LENGTH);
-        if (ImGui::Button("Instantiate")) {
-
-        }
+        ImGui::Combo("Objects", &debug::currentObjectIndexSelection, debug::instanceableObjectNames);
     }
     ImGui::ShowDemoWindow();
 }

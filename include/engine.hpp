@@ -1,6 +1,7 @@
 #ifndef __MD_ENGINE_H
 #define __MD_ENGINE_H
 
+#include <cstring>
 #ifndef NO_FONT_AWESOME
 #define NO_FONT_AWESOME
 #endif
@@ -73,6 +74,9 @@ inline ShaderColor ColorToShaderColor(Color col) {
     Math util
 */
 inline i32 imini(i32 a, i32 b) {return a < b ? a : b;}
+inline i64 imini(i64 a, i64 b) {return a < b ? a : b;}
+inline u32 uimini(u32 a, u32 b) {return a < b ? a : b;}
+inline u64 uimini(u64 a, u64 b) {return a < b ? a : b;}
 inline i32 iwrapi(i32 val, i32 min, i32 max) {
     i32 range = max - min;
 	return range == 0 ? min : min + ((((val - min) % range) + range) % range);
@@ -401,17 +405,17 @@ inline void DrawCrosshair(i32 x, i32 y, Color col) {
 // TODO: Decouple memory allocation calls.
 struct MemoryPool {
     void* buffer;
-    i32 location;
-    i32 size;
+    u64 location;
+    u64 size;
 };
-MemoryPool MemoryPoolCreate(i32 size);
+MemoryPool MemoryPoolCreate(u64 size);
 void MemoryPoolDestroy(MemoryPool* mm);
-void* MemoryPoolReserve(MemoryPool* mm, i32 size);
+void* MemoryPoolReserve(MemoryPool* mm, u64 size);
 void MemoryPoolClear(MemoryPool* mm);
 template <typename T>
 T* MemoryReserve(MemoryPool* mm);
 template <typename T>
-T* MemoryReserve(MemoryPool* mm, i32 size);
+T* MemoryReserve(MemoryPool* mm, u64 size);
 
 struct TextDrawingStyle {
     Color color;
@@ -447,6 +451,7 @@ enum INPUT {
 };
 #define INPUT_SELECT INPUT_ACCELERATE
 
+// TODO: Keybindings probably shouldn't be part of the engine code
 struct Input {
     i32 map[INPUT_COUNT];
     bool pressed[INPUT_COUNT];
@@ -458,6 +463,17 @@ void InputUpdate(Input* input);
 bool InputCheckPressedCombination(i32 a, i32 b);
 bool InputCheckPressedExclusive(i32 ind, i32 exclude);
 bool InputCheckPressedMod(i32 ind, bool shift, bool ctrl, bool alt);
+
+struct StringBuilder {
+    char* str;
+    char separator = -1;
+    i32 capacity;
+    i32 position;
+};
+StringBuilder StringBuilderCreate(i32 capacity, MemoryPool* mp);
+i32 StringBuilderAddString(StringBuilder* sb, const char* str);
+i32 StringBuilderAddChar(StringBuilder* sb, char chr);
+void _StringBuilderAddChar(StringBuilder* sb, char chr);
 
 struct String {
     char* cstr;
@@ -551,6 +567,7 @@ struct GameObjectDefinition {
     void (*DrawImGui) (void*);
     const char* objectName;
 };
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, MemoryPool* mp);
 struct GameObject {
     void (*Update) (void*);
     void (*Draw3d) (void*);
@@ -572,9 +589,10 @@ struct StringList {
     String* data;
     i32 size;
     i32 capacity;
+    MemoryPool* _memoryPool;
 };
 void StringListInit(StringList* list, i32 size, MemoryPool* mp);
-void StringListAdd(StringList* list, const char* cstr, MemoryPool* mp);
+void StringListAdd(StringList* list, const char* cstr);
 String* StringListGet(StringList* list, i32 ind);
 
 typedef void(*EventCallbackSignature)(void* registrar, void* args);
@@ -613,6 +631,7 @@ struct TypeList {
 enum TYPE_LIST_TYPE {
     TYPE_LIST_I32,
     TYPE_LIST_PTR,
+    TYPE_LIST_GAME_OBJECT_DEFINITION,
     __TYPE_LIST_TYPE_COUNT
 };
 TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5);
@@ -627,6 +646,14 @@ void TypeListPushBackPtr(TypeList* list, void* val);
 void* TypeListGetPtr(TypeList* list, i32 ind);
 void TypeListSetPtr(TypeList* list, i32 ind, void* val);
 i32 TypeListFindPtr(TypeList* list, void* val);
+void _TypeListPushBackPtr(TypeList* list, void* val);
+void* _TypeListGetPtr(TypeList* list, i32 ind);
+void _TypeListSetPtr(TypeList* list, i32 ind, void* val);
+i32 _TypeListFindPtr(TypeList* list, void* val);
+void TypeListPushBackGameObjectDefinition(TypeList* list, GameObjectDefinition val);
+GameObjectDefinition* TypeListGetGameObjectDefinition(TypeList* list, i32 ind);
+void TypeListSetGameObjectDefinition(TypeList* list, i32 ind, GameObjectDefinition val);
+i32 TypeListFindGameObjectDefinition(TypeList* list, GameObject* val);
 
 struct Typewriter {
     String *text;
@@ -770,6 +797,11 @@ struct Skybox {
 void SkyboxDraw3d(void* _skybox);
 GameObject SkyboxPack(Skybox* skybox);
 /*
+    Engine dependent utility definitions
+*/
+const char* CstringDuplicate(const char* cstr, MemoryPool* mm);
+
+/*
     Init
 */
 namespace mdEngine {
@@ -777,10 +809,42 @@ namespace mdEngine {
     MemoryPool scratchMemory;
     MemoryPool sceneMemory;
     MemoryPool persistentMemory;
+    MemoryPool engineMemory;
     EventHandler eventHandler;
     Input input;
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
+    TypeList* gameObjectDefinitions;
 };
+
+void MdEngineRegisterObjects() {
+    TypeList* defs = mdEngine::gameObjectDefinitions;
+    MemoryPool* mp = &mdEngine::engineMemory;
+    GameObjectDefinition def = {};
+    {
+        def = GameObjectDefinitionCreate("Dialogue Sequence", mp);
+        def.DrawUi = DialogueSequenceDrawUi;
+        def.Update = DialogueSequenceUpdate;
+        TypeListPushBackGameObjectDefinition(defs, def);
+    }
+    {
+        def = GameObjectDefinitionCreate("Model Instance", mp);
+        def.Draw3d = ModelInstanceDraw3d;
+        def.DrawImGui = ModelInstanceDrawImGui;
+        TypeListPushBackGameObjectDefinition(defs, def);
+    }
+    {
+        def = GameObjectDefinitionCreate("Particle System", mp);
+        def.Draw3d = ParticleSystemDraw3d;
+        def.Update = ParticleSystemUpdate;
+        def.Free = ParticleSystemFree;
+        TypeListPushBackGameObjectDefinition(defs, def);
+    }
+    {
+        def = GameObjectDefinitionCreate("Texture Instance", mp);
+        def.DrawUi = TextureInstanceDrawUi;
+        TypeListPushBackGameObjectDefinition(defs, def);
+    }
+}
 
 void MdEngineInit(i32 memoryPoolSize) {
     if (mdEngine::initialized) {
@@ -790,7 +854,10 @@ void MdEngineInit(i32 memoryPoolSize) {
     mdEngine::scratchMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::sceneMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::persistentMemory = MemoryPoolCreate(memoryPoolSize);
+    mdEngine::engineMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::eventHandler = EventHandlerCreate();
+    mdEngine::gameObjectDefinitions = TypeListCreate(TYPE_LIST_GAME_OBJECT_DEFINITION, &mdEngine::engineMemory, 500);
+    MdEngineRegisterObjects();
     InputInit(&mdEngine::input);
 }
 
@@ -808,7 +875,7 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm) {
 /*
     Engine function implementations
 */
-MemoryPool MemoryPoolCreate(i32 size) {
+MemoryPool MemoryPoolCreate(u64 size) {
     MemoryPool mm = {};
     mm.buffer = calloc(size, sizeof(byte));
     mm.location = 0;
@@ -820,14 +887,14 @@ void MemoryPoolDestroy(MemoryPool* mm) {
         free(mm->buffer);
     }
 }
-void* MemoryPoolReserve(MemoryPool* mm, i32 size) {
+void* MemoryPoolReserve(MemoryPool* mm, u64 size) {
     assert(mm->location + size < mm->size); // Out of memory check
     assert(size > 0);
     void* reserve = (byte*)mm->buffer + mm->location;
     mm->location += size;
     if (mm->location % sizeof(void*) != 0) {
-        i32 alignedLocation = mm->location + (sizeof(void*) - (mm->location % sizeof(void*)));
-        mm->location = imini(alignedLocation, mm->size);
+        u64 alignedLocation = mm->location + (sizeof(void*) - (mm->location % sizeof(void*)));
+        mm->location = uimini(alignedLocation, mm->size);
     }
     return reserve;
 }
@@ -841,7 +908,7 @@ T* MemoryReserve(MemoryPool* mm) {
     return (T*)MemoryPoolReserve(mm, sizeof(T));
 }
 template <typename T>
-T* MemoryReserve(MemoryPool* mm, i32 size) {
+T* MemoryReserve(MemoryPool* mm, u64 size) {
     return (T*)MemoryPoolReserve(mm, sizeof(T) * size);
 }
 
@@ -905,6 +972,37 @@ bool InputCheckPressedMod(i32 ind, bool shift, bool ctrl, bool alt) {
         }
     }
     return pressed && modifiersCheck;
+}
+
+StringBuilder StringBuilderCreate(i32 capacity, MemoryPool* mp) {
+    StringBuilder sb = {};
+    sb.str = (char*)MemoryReserve<char>(mp, capacity);
+    sb.separator = 0;
+    sb.capacity = capacity;
+    sb.position = 0;
+    return sb;
+}
+i32 StringBuilderAddString(StringBuilder* sb, const char* str) {
+    i32 separatorLength = (i32)(sb->separator != -1);
+    i32 length = (i32)strlen(str);
+    if (sb->capacity <= sb->position + length + separatorLength) {
+        return 1;
+    }
+    memcpy(sb->str + sb->position, str, length);
+    sb->position += length;
+    _StringBuilderAddChar(sb, sb->separator);
+    return 0;
+}
+i32 StringBuilderAddChar(StringBuilder* sb, char chr) {
+    if (sb->capacity <= sb->position) {
+        return 1;
+    }
+    _StringBuilderAddChar(sb, chr);
+    return 0;
+}
+void _StringBuilderAddChar(StringBuilder* sb, char chr) {
+    sb->str[sb->position] = chr;
+    sb->position++;
 }
 
 // TODO: Stop calling malloc
@@ -1218,6 +1316,12 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
     return ci;
 }
 
+// TODO: Rename because the memory pool parameter causes confusion
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, MemoryPool* mp) {
+    GameObjectDefinition def = {};
+    def.objectName = CstringDuplicate(objectName, mp);
+    return def;
+}
 GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName) {
     GameObject go = {};
     go.data = data;
@@ -1233,7 +1337,7 @@ void StringListInit(StringList* list, i32 size, MemoryPool* mp) {
     list->capacity = size;
     list->size = 0;
 }
-void StringListAdd(StringList* list, const char* cstr, MemoryPool* mp) {
+void StringListAdd(StringList* list, const char* cstr) {
     if (list->size >= list->capacity) {
         TraceLog(LOG_ERROR, "StringList: Out of strings");
         return;
@@ -1241,7 +1345,7 @@ void StringListAdd(StringList* list, const char* cstr, MemoryPool* mp) {
     String* data = (String*)list->data;
     i32 cstrLen = (i32)strlen(cstr);
     String* str = data + list->size;
-    str->cstr = MemoryReserve<char>(mp, cstrLen + 1);
+    str->cstr = MemoryReserve<char>(list->_memoryPool, cstrLen + 1);
     str->length = cstrLen;
     strcpy_s(str->cstr, cstrLen + 1, cstr);
     str->cstr[cstrLen] = '\0';
@@ -1337,6 +1441,8 @@ i32 TypeListTypeGetSize(i32 typeIndex) {
             return sizeof(i32);
         case TYPE_LIST_PTR:
             return sizeof(char*);
+        case TYPE_LIST_GAME_OBJECT_DEFINITION:
+            return sizeof(GameObjectDefinition);
         default:
             assert(false);
             return -1;
@@ -1379,25 +1485,63 @@ i32 TypeListFindI32(TypeList* list, i32 val) {
 }
 void TypeListPushBackPtr(TypeList* list, void* val) {
     assert(list->typeIndex == TYPE_LIST_PTR);
-    TypeListGrowCapacityIfLimitReached(list);
-    ((void**)list->buffer)[list->size] = val;
-    list->size++;
+    _TypeListPushBackPtr(list, val);
 }
 void* TypeListGetPtr(TypeList* list, i32 ind) {
     assert(list->typeIndex == TYPE_LIST_PTR);
     assert(ind < list->size);
-    return ((void**)list->buffer)[ind];
+    return _TypeListGetPtr(list, ind);
 }
 void TypeListSetPtr(TypeList* list, i32 ind, void* val) {
     assert(list->typeIndex == TYPE_LIST_PTR);
     assert(ind < list->size);
-    ((void**)list->buffer)[ind] = val;
+    _TypeListSetPtr(list, ind, val);
 }
 i32 TypeListFindPtr(TypeList* list, void* val) {
     assert(list->typeIndex == TYPE_LIST_PTR);
+    return _TypeListFindPtr(list, val);
+}
+void _TypeListPushBackPtr(TypeList* list, void* val) {
+    TypeListGrowCapacityIfLimitReached(list);
+    ((void**)list->buffer)[list->size] = val;
+    list->size++;
+}
+void* _TypeListGetPtr(TypeList* list, i32 ind) {
+    return ((void**)list->buffer)[ind];
+}
+void _TypeListSetPtr(TypeList* list, i32 ind, void* val) {
+    ((void**)list->buffer)[ind] = val;
+}
+i32 _TypeListFindPtr(TypeList* list, void* val) {
     void** buffer = (void**)list->buffer;
     for (i32 i = 0; i < list->size; i++) {
         if (buffer[i] == val) {
+            return i;
+        }
+    }
+    return -1;
+}
+void TypeListPushBackGameObjectDefinition(TypeList* list, GameObjectDefinition val) {
+    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    TypeListGrowCapacityIfLimitReached(list);
+    ((GameObjectDefinition*)list->buffer)[list->size] = val;
+    list->size++;
+}
+GameObjectDefinition* TypeListGetGameObjectDefinition(TypeList* list, i32 ind) {
+    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(ind < list->size);
+    return &((GameObjectDefinition*)list->buffer)[ind];
+}
+void TypeListSetGameObjectDefinition(TypeList* list, i32 ind, GameObjectDefinition val) {
+    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(ind < list->size);
+    ((GameObjectDefinition*)list->buffer)[ind] = val;
+}
+i32 TypeListFindGameObjectDefinitionShallow(TypeList* list, GameObjectDefinition* val) {
+    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    GameObjectDefinition* buffer = (GameObjectDefinition*)list->buffer;
+    for (i32 i = 0; i < list->size; i++) {
+        if (buffer + i == val) {
             return i;
         }
     }
@@ -1609,12 +1753,12 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
             text = dss->text;
             opt = dss->options;
             link = dss->link;
-            StringListAdd(text, "This is definitely text", &mdEngine::sceneMemory);
-            StringListAdd(text, "Surely this is pretty close in memory", &mdEngine::sceneMemory);
-            StringListAdd(text, "Hopefully I won't run out lol", &mdEngine::sceneMemory);
-            StringListAdd(opt, "You will", &mdEngine::sceneMemory);
-            StringListAdd(opt, "No", &mdEngine::sceneMemory);
-            StringListAdd(opt, "Repeat that please", &mdEngine::sceneMemory);
+            StringListAdd(text, "This is definitely text");
+            StringListAdd(text, "Surely this is pretty close in memory");
+            StringListAdd(text, "Hopefully I won't run out lol");
+            StringListAdd(opt, "You will");
+            StringListAdd(opt, "No");
+            StringListAdd(opt, "Repeat that please");
             TypeListPushBackI32(link, 1);
             TypeListPushBackI32(link, -1);
             TypeListPushBackI32(link, 0);
@@ -1624,7 +1768,7 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
             text = dss->text;
             opt = dss->options;
             link = dss->link;
-            StringListAdd(text, "I'm glad we agree, truly!", &mdEngine::sceneMemory);
+            StringListAdd(text, "I'm glad we agree, truly!");
             TypeListPushBackI32(link, -1);
             TypeListPushBackPtr(dseq->sections, dss);
             break;
