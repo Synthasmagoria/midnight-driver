@@ -550,14 +550,8 @@ struct EventArgs_DialogueOptionsSelected;
 struct TypeList;
 struct Typewriter;
 struct DialogueOptions;
-struct DialogueSequence;
-struct DialogueSequenceSection;
 struct Heightmap;
 struct InstanceMeshRenderData;
-struct ModelInstance;
-struct ParticleSystem;
-struct TextureInstance;
-struct Skybox;
 
 struct GameObjectDefinition {
     void (*Update) (void*);
@@ -700,28 +694,6 @@ void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
 GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName = "<unnamed>");
 
-struct DialogueSequence {
-    Typewriter typewriter;
-    DialogueOptions options;
-    TypeList* sections;
-    i32 sectionIndex;
-};
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
-void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
-void DialogueSequenceUpdate(void* _dseq);
-void DialogueSequenceDrawUi(void* _dseq);
-GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName = "<unnamed>");
-void DialogueSequenceStartSection(i32 ind);
-void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
-void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
-struct DialogueSequenceSection {
-    StringList* text;
-    StringList* options;
-    TypeList* link;
-};
-DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind);
-DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
-
 struct HeightmapGenerationInfo {
     Image *heightmapImage;
     v3 position;
@@ -749,6 +721,40 @@ struct InstanceMeshRenderData {
 };
 void InstanceMeshRenderDataDraw3d(void* _imrd);
 GameObject InstanceMeshRenderDataPack(InstanceMeshRenderData* forest, const char* instanceName);
+
+
+
+/*
+    Game Objects
+*/
+struct DialogueSequence;
+struct DialogueSequenceSection;
+struct ModelInstance;
+struct ParticleSystem;
+struct TextureInstance;
+struct Skybox;
+
+struct DialogueSequence {
+    Typewriter typewriter;
+    DialogueOptions options;
+    TypeList* sections;
+    i32 sectionIndex;
+};
+void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
+void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
+void DialogueSequenceUpdate(void* _dseq);
+void DialogueSequenceDrawUi(void* _dseq);
+GameObject DialogueSequencePack(DialogueSequence* dseq, const char* instanceName = "<unnamed>");
+void DialogueSequenceStartSection(i32 ind);
+void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
+void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
+struct DialogueSequenceSection {
+    StringList* text;
+    StringList* options;
+    TypeList* link;
+};
+DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind);
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
 
 struct ModelInstance {
     Model model;
@@ -804,6 +810,8 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm);
 /*
     Init
 */
+#define _MD_GAME_OBJECT_COUNT_MAX 500
+
 namespace mdEngine {
     bool initialized = false;
     MemoryPool scratchMemory;
@@ -813,37 +821,53 @@ namespace mdEngine {
     EventHandler eventHandler;
     Input input;
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
-    TypeList* gameObjectDefinitions;
+    GameObjectDefinition gameObjectDefinitions[_MD_GAME_OBJECT_COUNT_MAX];
+    bool gameObjectIsDefined[_MD_GAME_OBJECT_COUNT_MAX];
 };
 
+enum MD_GAME_ENGINE_OBJECTS {
+    OBJECT_DIALOGUE_SEQUENCE,
+    OBJECT_MODEL_INSTANCE,
+    OBJECT_PARTICLE_SYSTEM,
+    OBJECT_TEXTURE_INSTANCE,
+    OBJECT_SKYBOX,
+    _MD_GAME_ENGINE_OBJECTS_COUNT
+};
+
+void MdEngineRegisterObject(GameObjectDefinition def, i32 ind) {
+    assert(ind < _MD_GAME_OBJECT_COUNT_MAX);
+    assert(!mdEngine::gameObjectIsDefined[ind]);
+    mdEngine::gameObjectDefinitions[ind] = def;
+    mdEngine::gameObjectIsDefined[ind] = true;
+}
+
+// TODO: Move definition creation to where the object is so that it becomes more easily editable
 void MdEngineRegisterObjects() {
-    TypeList* defs = mdEngine::gameObjectDefinitions;
     MemoryPool* mp = &mdEngine::engineMemory;
     GameObjectDefinition def = {};
-    {
-        def = GameObjectDefinitionCreate("Dialogue Sequence", mp);
-        def.DrawUi = DialogueSequenceDrawUi;
-        def.Update = DialogueSequenceUpdate;
-        TypeListPushBackGameObjectDefinition(defs, def);
-    }
-    {
-        def = GameObjectDefinitionCreate("Model Instance", mp);
-        def.Draw3d = ModelInstanceDraw3d;
-        def.DrawImGui = ModelInstanceDrawImGui;
-        TypeListPushBackGameObjectDefinition(defs, def);
-    }
-    {
-        def = GameObjectDefinitionCreate("Particle System", mp);
-        def.Draw3d = ParticleSystemDraw3d;
-        def.Update = ParticleSystemUpdate;
-        def.Free = ParticleSystemFree;
-        TypeListPushBackGameObjectDefinition(defs, def);
-    }
-    {
-        def = GameObjectDefinitionCreate("Texture Instance", mp);
-        def.DrawUi = TextureInstanceDrawUi;
-        TypeListPushBackGameObjectDefinition(defs, def);
-    }
+    def = GameObjectDefinitionCreate("Dialogue Sequence", mp);
+    def.DrawUi = DialogueSequenceDrawUi;
+    def.Update = DialogueSequenceUpdate;
+    MdEngineRegisterObject(def, OBJECT_DIALOGUE_SEQUENCE);
+
+    def = GameObjectDefinitionCreate("Model Instance", mp);
+    def.Draw3d = ModelInstanceDraw3d;
+    def.DrawImGui = ModelInstanceDrawImGui;
+    MdEngineRegisterObject(def, OBJECT_MODEL_INSTANCE);
+
+    def = GameObjectDefinitionCreate("Particle System", mp);
+    def.Draw3d = ParticleSystemDraw3d;
+    def.Update = ParticleSystemUpdate;
+    def.Free = ParticleSystemFree;
+    MdEngineRegisterObject(def, OBJECT_PARTICLE_SYSTEM);
+
+    def = GameObjectDefinitionCreate("Texture Instance", mp);
+    def.DrawUi = TextureInstanceDrawUi;
+    MdEngineRegisterObject(def, OBJECT_TEXTURE_INSTANCE);
+
+    def = GameObjectDefinitionCreate("Skybox", mp);
+    def.Draw3d = SkyboxDraw3d;
+    MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
 
 void MdEngineInit(i32 memoryPoolSize) {
@@ -856,7 +880,6 @@ void MdEngineInit(i32 memoryPoolSize) {
     mdEngine::persistentMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::engineMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::eventHandler = EventHandlerCreate();
-    mdEngine::gameObjectDefinitions = TypeListCreate(TYPE_LIST_GAME_OBJECT_DEFINITION, &mdEngine::engineMemory, 500);
     MdEngineRegisterObjects();
     InputInit(&mdEngine::input);
 }

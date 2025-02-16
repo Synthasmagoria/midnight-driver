@@ -15,17 +15,14 @@
 #include "typedefs.hpp"
 #include "engine.hpp"
 
-struct ForestGenerationInfo {
-    v2 worldPosition;
-    v2 worldSize;
-    float density;
-    float treeChance;
-    float randomPositionOffset;
-    float randomYDip;
-    float randomTiltDegrees;
-    Heightmap* heightmap;
+/*
+    Game objects
+*/
+enum MD_GAME_OBJECTS_CUSTOM {
+    OBJECT_CAB = _MD_GAME_ENGINE_OBJECTS_COUNT,
 };
-InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
+
+struct Cab;
 
 struct Cab {
     Model model;
@@ -60,6 +57,21 @@ void CabDraw3d(void* cab);
 void CabDrawImGui(void* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
 GameObject CabPack(Cab* cab, const char* instanceName = "<unnamed>");
+
+/*
+
+*/
+struct ForestGenerationInfo {
+    v2 worldPosition;
+    v2 worldSize;
+    float density;
+    float treeChance;
+    float randomPositionOffset;
+    float randomYDip;
+    float randomTiltDegrees;
+    Heightmap* heightmap;
+};
+InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
 
 struct CameraManager {
     Camera playerCamera;
@@ -207,17 +219,40 @@ namespace debug {
     const char* instanceableObjectNames;
 }
 
-void DebugInit() {
+void MdDebugInit() {
     StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
     sb.separator = '\0';
-    for (i32 i = 0; i < mdEngine::gameObjectDefinitions->size; i++) {
-        GameObjectDefinition* def = TypeListGetGameObjectDefinition(mdEngine::gameObjectDefinitions, i);
-        if (StringBuilderAddString(&sb, def->objectName) != 0) {
+    for (i32 i = 0; i < _MD_GAME_OBJECT_COUNT_MAX; i++) {
+        if (!mdEngine::gameObjectIsDefined[i]) {
+            continue;
+        }
+        GameObjectDefinition def = mdEngine::gameObjectDefinitions[i];
+        if (StringBuilderAddString(&sb, def.objectName) != 0) {
             TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
             break;
         }
     }
     debug::instanceableObjectNames = sb.str;
+}
+
+void MdGameRegisterObjects() {
+    GameObjectDefinition def;
+    MemoryPool* mp = &mdEngine::engineMemory;
+
+    def = GameObjectDefinitionCreate("Cab", mp);
+    def.Draw3d = CabDraw3d;
+    def.DrawImGui = CabDrawImGui;
+    def.Update = CabUpdate;
+    MdEngineRegisterObject(def, OBJECT_CAB);
+}
+
+void MdGameInit() {
+    MdGameRegisterObjects();
+
+    global::currentCameraUi.offset = {0.f, 0.f};
+    global::currentCameraUi.rotation = 0.f;
+    global::currentCameraUi.target = {0.f, 0.f};
+    global::currentCameraUi.zoom = 1.f;
 }
 
 void LoadGameShaders();
@@ -261,15 +296,11 @@ i32 main() {
 
     LoadGameResources();
     MdEngineInit(1 << 16);
-    DebugInit();
+    MdGameInit();
+    MdDebugInit();
 
     GameObject gameObject[GAME_OBJECT_MAX];
     i32 gameObjectCount = SceneSetup_PriestReachout(gameObject);
-
-    global::currentCameraUi.offset = {0.f, 0.f};
-    global::currentCameraUi.rotation = 0.f;
-    global::currentCameraUi.target = {0.f, 0.f};
-    global::currentCameraUi.zoom = 1.f;
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -771,7 +802,6 @@ v3 CabGetFrontSeatPosition(Cab *cab) {
 }
 GameObject CabPack(Cab* cab, const char* instanceName) {
     GameObject go = GameObjectCreate(cab, "Cab", instanceName);
-    
     return go;
 }
 
