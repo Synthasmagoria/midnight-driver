@@ -219,6 +219,7 @@ namespace debug {
     i32 instanceableObjectSelection = -1;
     const char* instanceableObjectNames;
     TypeList* instanceableObjectIndices;
+    const char* imguiEditorTexturePaths;
 }
 
 void MdGameObjectAdd(GameObject* gameObjects, i32* gameObjectCount, GameObject obj) {
@@ -231,21 +232,34 @@ void MdDebugInit() {
         TYPE_LIST_I32,
         &mdEngine::engineMemory,
         _MD_GAME_ENGINE_OBJECT_COUNT_MAX);
-    StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
-    sb.separator = '\0';
-    for (i32 i = 0; i < _MD_GAME_ENGINE_OBJECT_COUNT_MAX; i++) {
-        if (!mdEngine::gameObjectIsDefined[i]) {
-            continue;
+    {
+        StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
+        sb.separator = '\0';
+        for (i32 i = 0; i < _MD_GAME_ENGINE_OBJECT_COUNT_MAX; i++) {
+            if (!mdEngine::gameObjectIsDefined[i]) {
+                continue;
+            }
+            GameObjectDefinition def = mdEngine::gameObjectDefinitions[i];
+            if (StringBuilderAddString(&sb, def.objectName) != 0) {
+                TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
+                break;
+            } else {
+                TypeListPushBackI32(debug::instanceableObjectIndices, i);
+            }
         }
-        GameObjectDefinition def = mdEngine::gameObjectDefinitions[i];
-        if (StringBuilderAddString(&sb, def.objectName) != 0) {
-            TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
-            break;
-        } else {
-            TypeListPushBackI32(debug::instanceableObjectIndices, i);
-        }
+        debug::instanceableObjectNames = sb.str;
     }
-    debug::instanceableObjectNames = sb.str;
+    {
+        StringBuilder sb = StringBuilderCreate(2048, &mdEngine::engineMemory);
+        sb.separator = '\0';
+        for (i32 i = 0; i < resources::TEXTURE_COUNT; i++) {
+            if (StringBuilderAddString(&sb, resources::texturePaths[i]) != 0) {
+                TraceLog(LOG_WARNING, TextFormat("%s: String builder ran out of memory", nameof(DebugInit)));
+                break;
+            }
+        }
+        debug::imguiEditorTexturePaths = sb.str;
+    }
 }
 
 enum MD_GAME_OBJECTS_CUSTOM {
@@ -320,7 +334,7 @@ i32 main() {
     MdGameInit();
     MdDebugInit();
 
-    SceneSetup01(global::gameObjects, &global::gameObjectCount);
+    SceneSetup_PriestReachout(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -379,6 +393,25 @@ i32 main() {
     return 0;
 }
 
+// TODO: This implementation is only here temporarily because resources don't exist in engine.hpp
+// Separate texture selection combo from the instance to fix this
+void TextureInstanceDrawImGui(void* _ti) {
+    TextureInstance* ti = (TextureInstance*)_ti;
+    v2 position = ti->position;
+    if (ImGui::DragFloat2("Position", (float*)&position)) {
+        TextureInstanceSetPosition(ti, position);
+    }
+    ImGui::DragFloat("Rotation", &ti->rotation);
+    v2 size = v2{ti->_drawDestination.width, ti->_drawDestination.height};
+    if (ImGui::DragFloat2("Size", (float*)&size)) {
+        TextureInstanceSetSize(ti, size);
+    }
+    // TODO: Move texture selection combo out of instance
+    if (ImGui::Combo("Texture", &ti->_imguiTextureIndex, debug::imguiEditorTexturePaths)) {
+        TextureInstanceSetTexture(ti, &resources::textures[ti->_imguiTextureIndex]);
+    }
+}
+
 void SceneSetup01(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
     {
@@ -412,15 +445,6 @@ void SceneSetup01(GameObject* go, i32* count) {
 };
 void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
-        ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_LEVEL0];
-        mi->position = {0.f, 0.f, 0.f};
-        mi->scale = 1.f;
-        mi->tint = WHITE;
-        MdGameObjectAdd(go, count, obj);
-    }
 }
 
 void LoadGameShaders() {
@@ -581,7 +605,6 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
             MdGameObjectAdd(gameObjects, gameObjectCount, obj);
         }
     }
-    ImGui::ShowDemoWindow();
 }
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {

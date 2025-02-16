@@ -786,11 +786,16 @@ struct TextureInstance {
     v2 _scale;
     rect2 _drawSource;
     rect2 _drawDestination;
+    // TODO: Temporary remove once texture selection combo has been moved out of ImGui function!!!!!!
+    i32 _imguiTextureIndex = -1;
 };
 // TODO: Implement texture instance set texture
 void* TextureInstanceCreate(MemoryPool* mp);
 void TextureInstanceDrawUi(void* _ti);
+void TextureInstanceDrawImGui(void* _ti);
+void TextureInstanceSetTexture(TextureInstance* ti, Texture* texture);
 void TextureInstanceSetSize(TextureInstance* ti, v2 size);
+void TextureInstanceSetPosition(TextureInstance* ti, v2 position);
 
 struct Skybox {
     Model model;
@@ -860,6 +865,7 @@ void MdEngineRegisterObjects() {
 
     def = GameObjectDefinitionCreate("Texture Instance", TextureInstanceCreate, mp);
     def.DrawUi = TextureInstanceDrawUi;
+    def.DrawImGui = TextureInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_TEXTURE_INSTANCE);
 
     def = GameObjectDefinitionCreate("Skybox", SkyboxCreate, mp);
@@ -1987,9 +1993,18 @@ void* TextureInstanceCreate(MemoryPool* mp) {
     ti->_scale = {1.f, 1.f};
     return ti;
 }
+void TextureInstanceSetTexture(TextureInstance* ti, Texture* texture) {
+    ti->texture = texture;
+    ti->_drawSource = {0.f, 0.f, (float)texture->width, (float)texture->height};
+}
 void TextureInstanceSetSize(TextureInstance* ti, v2 size) {
     ti->_drawDestination.width = size.x;
     ti->_drawDestination.height = size.y;
+}
+void TextureInstanceSetPosition(TextureInstance* ti, v2 position) {
+    ti->_drawDestination.x = position.x;
+    ti->_drawDestination.y = position.y;
+    ti->position = position;
 }
 void TextureInstanceDrawUi(void* _ti) {
     TextureInstance* ti = (TextureInstance*)_ti;
