@@ -51,7 +51,7 @@ struct Cab {
 
     bool meshVisible[10];
 };
-Cab* CabCreate(MemoryPool* mp);
+void* CabCreate(MemoryPool* mp);
 void CabUpdate(void* cab);
 void CabDraw3d(void* cab);
 void CabDrawImGui(void* cab);
@@ -239,7 +239,7 @@ void MdGameRegisterObjects() {
     GameObjectDefinition def;
     MemoryPool* mp = &mdEngine::engineMemory;
 
-    def = GameObjectDefinitionCreate("Cab", mp);
+    def = GameObjectDefinitionCreate("Cab", CabCreate, mp);
     def.Draw3d = CabDraw3d;
     def.DrawImGui = CabDrawImGui;
     def.Update = CabUpdate;
@@ -396,7 +396,7 @@ i32 SceneSetup01(GameObject* goOut) {
     HeightmapInit(hm, hgi);
     mdEngine::groups["terrainHeightmap"] = hm;
 
-    goOut[goCount] = CabPack(CabCreate(&mdEngine::sceneMemory)); goCount++;
+    goOut[goCount] = CabPack((Cab*)CabCreate(&mdEngine::sceneMemory)); goCount++;
 
     CameraManager* camMan = MemoryReserve<CameraManager>(&mdEngine::sceneMemory);
     CameraManagerInit(camMan, CameraGetDefault());
@@ -423,10 +423,10 @@ i32 SceneSetup_PriestReachout(GameObject* go) {
 i32 SceneSetup_DialogueTest(GameObject* go) {
     i32 goCount = 0;
 
-    DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&mdEngine::sceneMemory);
-    DialogueSequenceInit(dseq, 0);
-    go[goCount] = DialogueSequencePack(dseq);
-    goCount++;
+    //DialogueSequence* dseq = MemoryReserve<DialogueSequence>(&mdEngine::sceneMemory);
+    //DialogueSequenceCreate(dseq, 0);
+    //go[goCount] = DialogueSequencePack(dseq);
+    //goCount++;
 
     return goCount;
 }
@@ -695,7 +695,7 @@ InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGen
     return imrd;
 }
 
-Cab* CabCreate(MemoryPool* mp) {
+void* CabCreate(MemoryPool* mp) {
     Cab* cab = MemoryReserve<Cab>(mp);
     cab->model = resources::models[resources::MODEL_CAB];
     cab->frontSeatPosition = {-0.16f, 1.85f, -0.44f};

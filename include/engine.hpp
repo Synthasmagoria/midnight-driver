@@ -553,7 +553,9 @@ struct DialogueOptions;
 struct Heightmap;
 struct InstanceMeshRenderData;
 
+typedef void*(*GameInstanceCreateFunctionSignature)(MemoryPool*);
 struct GameObjectDefinition {
+    GameInstanceCreateFunctionSignature Create;
     void (*Update) (void*);
     void (*Draw3d) (void*);
     void (*DrawUi) (void*);
@@ -561,7 +563,7 @@ struct GameObjectDefinition {
     void (*DrawImGui) (void*);
     const char* objectName;
 };
-GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, MemoryPool* mp);
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp);
 struct GameObject {
     void (*Update) (void*);
     void (*Draw3d) (void*);
@@ -740,7 +742,7 @@ struct DialogueSequence {
     TypeList* sections;
     i32 sectionIndex;
 };
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind);
+void* DialogueSequenceCreate(MemoryPool* mp);
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDrawUi(void* _dseq);
@@ -762,7 +764,7 @@ struct ModelInstance {
     float scale;
     Color tint;
 };
-ModelInstance* ModelInstanceCreate(MemoryPool* mp);
+void* ModelInstanceCreate(MemoryPool* mp);
 void ModelInstanceDraw3d(void* _mi);
 void ModelInstanceDrawImGui(void* _mi);
 GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName = "<unnamed>");
@@ -775,7 +777,7 @@ struct ParticleSystem {
     v3 velocity;
     i32 count;
 };
-void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material);
+void* ParticleSystemCreate(MemoryPool* mp);
 void ParticleSystemFree(void* psys);
 void ParticleSystemUpdate(void* psys);
 void ParticleSystemDraw3d(void* psys);
@@ -791,15 +793,17 @@ struct TextureInstance {
     rect2 _drawSource;
     rect2 _drawDestination;
 };
-void TextureInstanceSetSize(TextureInstance* ti, v2 size);
-void TextureInstanceInit(TextureInstance* ti, Texture* tex);
+// TODO: Implement texture instance set texture
+void* TextureInstanceCreate(MemoryPool* mp);
 void TextureInstanceDrawUi(void* _ti);
+void TextureInstanceSetSize(TextureInstance* ti, v2 size);
 GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName = "<unnamed>");
 
 struct Skybox {
     Model model;
     Shader shader;
 };
+void* SkyboxCreate(MemoryPool* mp);
 void SkyboxDraw3d(void* _skybox);
 GameObject SkyboxPack(Skybox* skybox);
 /*
@@ -820,6 +824,7 @@ namespace mdEngine {
     MemoryPool engineMemory;
     EventHandler eventHandler;
     Input input;
+    Texture missingTexture;
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
     GameObjectDefinition gameObjectDefinitions[_MD_GAME_OBJECT_COUNT_MAX];
     bool gameObjectIsDefined[_MD_GAME_OBJECT_COUNT_MAX];
@@ -845,27 +850,27 @@ void MdEngineRegisterObject(GameObjectDefinition def, i32 ind) {
 void MdEngineRegisterObjects() {
     MemoryPool* mp = &mdEngine::engineMemory;
     GameObjectDefinition def = {};
-    def = GameObjectDefinitionCreate("Dialogue Sequence", mp);
+    def = GameObjectDefinitionCreate("Dialogue Sequence", DialogueSequenceCreate, mp);
     def.DrawUi = DialogueSequenceDrawUi;
     def.Update = DialogueSequenceUpdate;
     MdEngineRegisterObject(def, OBJECT_DIALOGUE_SEQUENCE);
 
-    def = GameObjectDefinitionCreate("Model Instance", mp);
+    def = GameObjectDefinitionCreate("Model Instance", ModelInstanceCreate, mp);
     def.Draw3d = ModelInstanceDraw3d;
     def.DrawImGui = ModelInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_MODEL_INSTANCE);
 
-    def = GameObjectDefinitionCreate("Particle System", mp);
+    def = GameObjectDefinitionCreate("Particle System", ParticleSystemCreate, mp);
     def.Draw3d = ParticleSystemDraw3d;
     def.Update = ParticleSystemUpdate;
     def.Free = ParticleSystemFree;
     MdEngineRegisterObject(def, OBJECT_PARTICLE_SYSTEM);
 
-    def = GameObjectDefinitionCreate("Texture Instance", mp);
+    def = GameObjectDefinitionCreate("Texture Instance", TextureInstanceCreate, mp);
     def.DrawUi = TextureInstanceDrawUi;
     MdEngineRegisterObject(def, OBJECT_TEXTURE_INSTANCE);
 
-    def = GameObjectDefinitionCreate("Skybox", mp);
+    def = GameObjectDefinitionCreate("Skybox", SkyboxCreate, mp);
     def.Draw3d = SkyboxDraw3d;
     MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
@@ -880,8 +885,27 @@ void MdEngineInit(i32 memoryPoolSize) {
     mdEngine::persistentMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::engineMemory = MemoryPoolCreate(memoryPoolSize);
     mdEngine::eventHandler = EventHandlerCreate();
+    // TODO: Generate this instead of loading it from disk
+    mdEngine::missingTexture = LOAD_TEXTURE("missing_texture.png");
     MdEngineRegisterObjects();
     InputInit(&mdEngine::input);
+}
+
+GameObject MdEngineInstanceGameObject(i32 ind, MemoryPool* mp, const char* instanceName = "") {
+    assert(mdEngine::gameObjectIsDefined[ind]);
+    GameObject go = {};
+    GameObjectDefinition def = mdEngine::gameObjectDefinitions[ind];
+    go.objectName = def.objectName;
+    go.instanceName = CstringDuplicate(instanceName, mp);
+    go.active = true;
+    go.visible = true;
+    go.data = def.Create(mp);
+    go.Draw3d = def.Draw3d;
+    go.DrawUi = def.DrawUi;
+    go.DrawImGui = def.DrawImGui;
+    go.Free = def.Free;
+    go.Update = def.Update;
+    return go;
 }
 
 /*
@@ -1340,8 +1364,9 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
 }
 
 // TODO: Rename because the memory pool parameter causes confusion
-GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, MemoryPool* mp) {
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp) {
     GameObjectDefinition def = {};
+    def.Create = createFunc;
     def.objectName = CstringDuplicate(objectName, mp);
     return def;
 }
@@ -1756,7 +1781,8 @@ GameObject DialogueOptionsPack(DialogueOptions* dopt, const char* instanceName) 
     return go;
 }
 
-void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
+void* DialogueSequenceCreate(MemoryPool* mp) {
+    DialogueSequence* dseq = MemoryReserve<DialogueSequence>(mp);
     dseq->sectionIndex = 0;
     dseq->sections = TypeListCreate(TYPE_LIST_PTR, &mdEngine::sceneMemory, 50);
     TypewriterInit(&dseq->typewriter);
@@ -1764,7 +1790,8 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     dseq->typewriter.autoHide = false;
     DialogueOptionsInit(&dseq->options);
 
-    switch (ind) {
+    // TODO: Move this out of the create function. Should be called in some other way
+    switch (0) {
         case 0:
         {
             DialogueSequenceSection* dss = nullptr;
@@ -1801,6 +1828,7 @@ void DialogueSequenceInit(DialogueSequence* dseq, i32 ind) {
     DialogueSequenceSectionStart(dseq, 0);
     EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueSequenceHandleTypewriter_TextAdvance);
     EventHandlerRegisterEvent(EVENT_DIALOGUE_OPTIONS_SELECTED, dseq, (EventCallbackSignature)DialogueSequenceHandleOptions_Selected);
+    return dseq;
 }
 void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind) {
     DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, ind);
@@ -1923,7 +1951,7 @@ GameObject InstanceMeshRenderDataPack(InstanceMeshRenderData* forest, const char
     return go;
 }
 
-ModelInstance* ModelInstanceCreate(MemoryPool* mp) {
+void* ModelInstanceCreate(MemoryPool* mp) {
     ModelInstance* mi = MemoryReserve<ModelInstance>(mp);
     mi->scale = 1.f;
     mi->tint = WHITE;
@@ -1945,9 +1973,8 @@ GameObject ModelInstancePack(ModelInstance* mi, const char* instanceName) {
     return go;
 }
 
-void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material) {
-    psys->_material = material;
-    psys->_material.maps[MATERIAL_MAP_ALBEDO].texture = texture;
+void* ParticleSystemCreate(MemoryPool* mp) {
+    ParticleSystem* psys = MemoryReserve<ParticleSystem>(mp);
     psys->_quad = GenMeshPlane(1.f, 1.f, 1, 1);
     psys->_transforms = (mat4*)RL_CALLOC(PARTICLE_SYSTEM_MAX_PARTICLES, sizeof(mat4));
     psys->count = 64;
@@ -1957,6 +1984,7 @@ void ParticleSystemInit(ParticleSystem* psys, Texture texture, Material material
             GetRandomValueF(-10.f, 10.f),
             GetRandomValueF(-10.f, 10.f));
     }
+    return psys;
 }
 void ParticleSystemFree(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
@@ -1983,19 +2011,18 @@ GameObject ParticleSystemPack(ParticleSystem *psys, const char* instanceName) {
     return go;
 }
 
-void TextureInstanceInit(TextureInstance* ti, Texture* tex) {
+void* TextureInstanceCreate(MemoryPool* mp) {
+    TextureInstance* ti = MemoryReserve<TextureInstance>(mp);
+    Texture* tex = &mdEngine::missingTexture;
     ti->texture = tex;
-    if (ti->texture == nullptr) {
-        return;
-    }
     ti->position = {0.f, 0.f};
     ti->origin = {0.f, 0.f};
     ti->rotation = 0.f;
     ti->tint = WHITE;
-
     ti->_drawSource = {0.f, 0.f, (float)tex->width, (float)tex->height};
     ti->_drawDestination = {0.f, 0.f, (float)tex->width, (float)tex->height};
     ti->_scale = {1.f, 1.f};
+    return ti;
 }
 void TextureInstanceSetSize(TextureInstance* ti, v2 size) {
     ti->_drawDestination.width = size.x;
@@ -2011,6 +2038,10 @@ GameObject TextureInstancePack(TextureInstance* ti, const char* instanceName) {
     return go;
 }
 
+void* SkyboxCreate(MemoryPool* mp) {
+    Skybox* sb = MemoryReserve<Skybox>(mp);
+    return sb;
+}
 void SkyboxDraw3d(void* _skybox) {
     Skybox* skybox = (Skybox*)_skybox;
     rlDisableBackfaceCulling();
