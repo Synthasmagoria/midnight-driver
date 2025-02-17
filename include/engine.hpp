@@ -14,7 +14,6 @@
 #include "raylib/raymath.h"
 #include "raylib/rlgl.h"
 #include "imgui/imgui.h"
-#include "imgui/rlImGui.h"
 
 #include <vector>
 #include <unordered_map>
@@ -39,6 +38,101 @@
 /*
     Custom math structs
 */
+enum MD_TRANSFORM_ROTATION_ORDER {
+    TRANSFORM_ROTATION_ORDER_XYZ,
+    TRANSFORM_ROTATION_ORDER_XZY,
+    TRANSFORM_ROTATION_ORDER_YXZ,
+    TRANSFORM_ROTATION_ORDER_YZX,
+    TRANSFORM_ROTATION_ORDER_ZXY,
+    TRANSFORM_ROTATION_ORDER_ZYX
+};
+static const char* mdTransformRotationOrderNames[] = {
+    "xyz",
+    "xzy",
+    "yxz",
+    "yzx",
+    "zxy",
+    "zyx\0"
+};
+struct MdTransform {
+    v3 _translation;
+    v3 _scale;
+    v3 _rotation;
+    mat4 matrix;
+    i32 rotationOrder;
+};
+MdTransform TransformCreate() {
+    MdTransform transform = {};
+    transform._scale = {1.f, 1.f, 1.f};
+    transform.matrix = MatrixIdentity();
+    return transform;
+}
+void TransformUpdate(MdTransform* transform) {
+    mat4 matrix;
+    v3 rotation = transform->_rotation;
+    switch (transform->rotationOrder) {
+        case TRANSFORM_ROTATION_ORDER_XYZ:
+            matrix = MatrixRotateX(rotation.x);
+            matrix *= MatrixRotateY(rotation.y);
+            matrix *= MatrixRotateZ(rotation.z);
+            break;
+        case TRANSFORM_ROTATION_ORDER_XZY:
+            matrix = MatrixRotateX(rotation.x);
+            matrix *= MatrixRotateZ(rotation.z);
+            matrix *= MatrixRotateY(rotation.y);
+            break;
+        case TRANSFORM_ROTATION_ORDER_YXZ:
+            matrix *= MatrixRotateY(rotation.y);
+            matrix = MatrixRotateX(rotation.x);
+            matrix *= MatrixRotateZ(rotation.z);
+            break;
+        case TRANSFORM_ROTATION_ORDER_YZX:
+            matrix *= MatrixRotateY(rotation.y);
+            matrix *= MatrixRotateZ(rotation.z);
+            matrix = MatrixRotateX(rotation.x);
+            break;
+        case TRANSFORM_ROTATION_ORDER_ZXY:
+            matrix *= MatrixRotateZ(rotation.z);
+            matrix = MatrixRotateX(rotation.x);
+            matrix *= MatrixRotateY(rotation.y);
+            break;
+        case TRANSFORM_ROTATION_ORDER_ZYX:
+            matrix *= MatrixRotateZ(rotation.z);
+            matrix *= MatrixRotateY(rotation.y);
+            matrix = MatrixRotateX(rotation.x);
+            break;
+    }
+    matrix *= MatrixScale(transform->_scale.x, transform->_scale.y, transform->_scale.z);
+    matrix *= MatrixTranslate(transform->_translation.x, transform->_translation.y, transform->_translation.z);
+    transform->matrix = matrix;
+}
+void TransformSetTranslation(MdTransform* transform, v3 translation) {
+    transform->_translation = translation;
+    TransformUpdate(transform);
+}
+void TransformSetScale(MdTransform* transform, v3 scale) {
+    transform->_scale = scale;
+    TransformUpdate(transform);
+}
+void TransformSetRotation(MdTransform* transform, v3 rotation) {
+    transform->_rotation = rotation;
+    TransformUpdate(transform);
+}
+void TransformDrawImGui(MdTransform* transform) {
+    if (ImGui::DragFloat3("Position", (float*)&transform->_translation, 0.05f)) {
+        TransformUpdate(transform);
+    }
+    if (ImGui::DragFloat3("Scale", (float*)&transform->_scale, 0.05f)) {
+        TransformUpdate(transform);
+    }
+    if (ImGui::DragFloat3("Rotation", (float*)&transform->_rotation, 0.05f)) {
+        TransformUpdate(transform);
+    }
+    if (ImGui::Combo("Rotation Order", &transform->rotationOrder, mdTransformRotationOrderNames[0])) {
+        TransformUpdate(transform);
+    }
+}
+
 struct QuadraticBezier {v2 p1; v2 p2; v2 p3;};
 // https://www.desmos.com/calculator/scz7zhonfw
 float QuadraticBezierLerp(QuadraticBezier qb, float val) {
@@ -103,6 +197,12 @@ inline bool PointInRectangle(v2 begin, v2 end, v2 pt) {
 /*
     Raylib util
 */
+void DrawModelTransform(Model model, mat4 transform, Color tint) {
+    for (i32 i = 0; i < model.meshCount; i++) {
+        DrawMesh(model.meshes[i], model.materials[model.meshMaterial[i]], transform);
+    }
+}
+
 #define MAX_MATERIAL_MAPS 12
 void DrawMeshInstancedOptimized(Mesh mesh, Material material, const float16 *transforms, int instances) {
 #if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
@@ -756,9 +856,8 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
 
 struct ModelInstance {
     Model model;
-    v3 position;
-    float scale;
     Color tint;
+    MdTransform transform;
 };
 void* ModelInstanceCreate(MemoryPool* mp);
 void ModelInstanceDraw3d(void* _mi);
@@ -803,6 +902,7 @@ struct Skybox {
 };
 void* SkyboxCreate(MemoryPool* mp);
 void SkyboxDraw3d(void* _skybox);
+
 /*
     Engine dependent utility definitions
 */
@@ -1935,18 +2035,17 @@ void InstanceMeshRenderDataDraw3d(void* _imrd) {
 
 void* ModelInstanceCreate(MemoryPool* mp) {
     ModelInstance* mi = MemoryReserve<ModelInstance>(mp);
-    mi->scale = 1.f;
     mi->tint = WHITE;
+    mi->transform = TransformCreate();
     return mi;
 }
 void ModelInstanceDraw3d(void* _mi) {
     ModelInstance *mi = (ModelInstance*)_mi;
-    DrawModel(mi->model, mi->position, mi->scale, mi->tint);
+    DrawModelTransform(mi->model, mi->transform.matrix, mi->tint);
 }
 void ModelInstanceDrawImGui(void* _mi) {
     ModelInstance* mi = (ModelInstance*)_mi;
-    ImGui::DragFloat3("Position", (float*)&mi->position, 0.05f);
-    ImGui::DragFloat("Scale", (float*)&mi->scale, 0.05f);
+    TransformDrawImGui(&mi->transform);
 }
 
 void* ParticleSystemCreate(MemoryPool* mp) {

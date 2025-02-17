@@ -18,7 +18,6 @@
 /*
     Game objects
 */
-
 struct Cab;
 struct CameraManager;
 
@@ -131,8 +130,16 @@ namespace resources {
     };
     Material materials[MATERIAL_COUNT];
 
+    enum DEFAULT_GAME_MODELS {
+        MODEL_DEFAULT_PLANE,
+        MODEL_DEFAULT_CUBE,
+        MODEL_DEFAULT_SPHERE,
+        MODEL_DEFAULT_CYLINDER,
+        MODEL_DEFAULT_CONE,
+        MODEL_DEFAULT_COUNT
+    };
     enum GAME_MODELS {
-        MODEL_CAB,
+        MODEL_CAB = MODEL_DEFAULT_COUNT,
         MODEL_TREE,
         MODEL_LEVEL0,
         MODEL_COUNT
@@ -142,7 +149,7 @@ namespace resources {
         "tree.glb",
         "level0.glb"
     };
-    Model models[MODEL_COUNT];
+    Model models[MODEL_DEFAULT_COUNT + MODEL_COUNT];
 
     enum GAME_TEXTURES {
         TEXTURE_STAR,
@@ -333,7 +340,7 @@ i32 main() {
     MdEngineInit(1 << 16);
     MdGameInit();
     MdDebugInit();
-
+    
     SceneSetup_PriestReachout(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
@@ -445,6 +452,25 @@ void SceneSetup01(GameObject* go, i32* count) {
 };
 void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
+
+    {
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
+        Cab* cab = (Cab*)obj.data;
+        cab->model = resources::models[resources::MODEL_CAB];
+        MdGameObjectAdd(go, count, obj);
+    }
+    {
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
+        ModelInstance* mi = (ModelInstance*)obj.data;
+        mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
+        mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
+        MdGameObjectAdd(go, count, obj);
+    }
+    {
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+        CameraManager* cm = (CameraManager*)obj.data;
+        MdGameObjectAdd(go, count, obj);
+    }
 }
 
 void LoadGameShaders() {
@@ -512,8 +538,14 @@ void UnloadGameMaterials() {
 }
 
 void LoadGameModels() {
-    for (i32 i = 0; i < resources::MODEL_COUNT; i++) {
-        resources::models[i] = LOAD_MODEL(resources::modelPaths[i]);
+    resources::models[resources::MODEL_DEFAULT_CONE] = LoadModelFromMesh(GenMeshCone(1.f, 1.f, 16));
+    resources::models[resources::MODEL_DEFAULT_CUBE] = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    resources::models[resources::MODEL_DEFAULT_CYLINDER] = LoadModelFromMesh(GenMeshCylinder(1.f, 1.f, 16));
+    resources::models[resources::MODEL_DEFAULT_PLANE] = LoadModelFromMesh(GenMeshPlane(1.f, 1.f, 1, 1));
+    resources::models[resources::MODEL_DEFAULT_SPHERE] = LoadModelFromMesh(GenMeshSphere(1.f, 16, 16));
+    
+    for (i32 i = 0; i < resources::MODEL_COUNT - resources::MODEL_DEFAULT_COUNT; i++) {
+        resources::models[i + resources::MODEL_DEFAULT_COUNT] = LOAD_MODEL(resources::modelPaths[i]);
     }
 }
 void UnloadGameModels() {
@@ -716,6 +748,7 @@ void* CabCreate(MemoryPool* mp) {
     cab->_heightPrev = 0.f;
     cab->_speed = 0.f;
     cab->_turnAngle = 0.f;
+    memset(cab->meshVisible, 1, sizeof(cab->meshVisible));
     mdEngine::groups["cab"] = (void*)cab;
     return cab;
 }
