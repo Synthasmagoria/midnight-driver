@@ -25,6 +25,9 @@
 #define FRAME_TIME 1.f / 60.f
 #define FRAMERATE 60
 #define TAU PI * 2.f
+#define KILOBYTES(bytes)(bytes * 1000)
+#define MEGABYTES(bytes)(bytes * 1000000)
+#define GIGABYTES(bytes)(bytes * 1000000000)
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
@@ -650,7 +653,7 @@ struct TypeList;
 struct Typewriter;
 struct DialogueOptions;
 struct Heightmap;
-struct InstanceMeshRenderData;
+struct InstanceRenderer;
 
 typedef void*(*GameInstanceCreateFunctionSignature)(MemoryPool*);
 struct GameObjectDefinition {
@@ -795,7 +798,7 @@ void DialogueOptionsUpdate(void* _dopt);
 void DialogueOptionsDraw(void* _dopt);
 
 struct HeightmapGenerationInfo {
-    Image *heightmapImage;
+    Image *image;
     v3 position;
     v3 size;
     i32 resdiv;
@@ -812,16 +815,14 @@ void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info);
 float HeightmapSampleHeight(Heightmap* heightmap, float x, float z);
 void HeightmapFree(Heightmap* hm);
 
-struct InstanceMeshRenderData {
+struct InstanceRenderer {
     float16 *transforms;
     i32 instanceCount;
-    Model _model;
     Mesh mesh;
     Material material;
 };
-void InstanceMeshRenderDataDraw3d(void* _imrd);
-
-
+void* InstanceRendererCreate(MemoryPool* mp);
+void InstanceRendererDraw3d(void* _is);
 
 /*
     Game Objects
@@ -829,6 +830,7 @@ void InstanceMeshRenderDataDraw3d(void* _imrd);
 struct DialogueSequence;
 struct DialogueSequenceSection;
 struct ModelInstance;
+struct ModelInstanceInstanced;
 struct ParticleSystem;
 struct TextureInstance;
 struct Skybox;
@@ -930,6 +932,7 @@ namespace mdEngine {
 enum MD_GAME_ENGINE_OBJECTS {
     OBJECT_DIALOGUE_SEQUENCE,
     OBJECT_MODEL_INSTANCE,
+    OBJECT_INSTANCE_RENDERER,
     OBJECT_PARTICLE_SYSTEM,
     OBJECT_TEXTURE_INSTANCE,
     OBJECT_SKYBOX,
@@ -957,6 +960,10 @@ void MdEngineRegisterObjects() {
     def.DrawImGui = ModelInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_MODEL_INSTANCE);
 
+    def = GameObjectDefinitionCreate("Instance Renderer", InstanceRendererCreate, mp);
+    def.Draw3d = InstanceRendererDraw3d;
+    MdEngineRegisterObject(def, OBJECT_INSTANCE_RENDERER);
+
     def = GameObjectDefinitionCreate("Particle System", ParticleSystemCreate, mp);
     def.Draw3d = ParticleSystemDraw3d;
     def.Update = ParticleSystemUpdate;
@@ -973,7 +980,7 @@ void MdEngineRegisterObjects() {
     MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
 
-void MdEngineInit(i32 memoryPoolSize) {
+void MdEngineInit(u64 memoryPoolSize) {
     if (mdEngine::initialized) {
         return;
     }
@@ -1979,13 +1986,13 @@ void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptio
 
 void HeightmapInit(Heightmap* hm, HeightmapGenerationInfo info) {
     const i32 resdiv = info.resdiv;
-    const Image *image = info.heightmapImage;
+    const Image *image = info.image;
     const i32 stride = PixelformatGetStride(image->format);
     const i32 heightDataWidth = image->width >> resdiv;
     const i32 heightDataHeight = image->height >> resdiv;
 
     float *heightData = (float*)malloc(heightDataWidth * heightDataHeight * sizeof(float));
-    byte* data = (byte*)info.heightmapImage->data;
+    byte* data = (byte*)info.image->data;
     i32 dataW = heightDataWidth;
     i32 imgw = image->width;
 
@@ -2028,9 +2035,14 @@ void HeightmapFree(Heightmap* hm) {
     memset(hm, NULL, sizeof(Heightmap));
 }
 
-void InstanceMeshRenderDataDraw3d(void* _imrd) {
-    InstanceMeshRenderData* imrd = (InstanceMeshRenderData*)_imrd;
-    DrawMeshInstancedOptimized(imrd->mesh, imrd->material, imrd->transforms, imrd->instanceCount);
+void* InstanceRendererCreate(MemoryPool* mp) {
+    InstanceRenderer* ir = MemoryReserve<InstanceRenderer>(mp);
+    ir->transforms = nullptr;
+    return ir;
+}
+void InstanceRendererDraw3d(void* _is) {
+    InstanceRenderer* is = (InstanceRenderer*)_is;
+    DrawMeshInstancedOptimized(is->mesh, is->material, is->transforms, is->instanceCount);
 }
 
 void* ModelInstanceCreate(MemoryPool* mp) {

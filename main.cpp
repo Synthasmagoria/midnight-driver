@@ -76,8 +76,8 @@ Camera CameraGetDefault();
 
 */
 struct ForestGenerationInfo {
-    v2 worldPosition;
-    v2 worldSize;
+    v2 position;
+    v2 size;
     float density;
     float treeChance;
     float randomPositionOffset;
@@ -85,7 +85,7 @@ struct ForestGenerationInfo {
     float randomTiltDegrees;
     Heightmap* heightmap;
 };
-InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material);
+void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material material, MemoryPool* sceneMemory, MemoryPool* scratchMemory);
 
 // TODO: Make this reusable
 struct TextureInstance_PriestReachout {
@@ -117,7 +117,7 @@ namespace resources {
         "light.vs", "lightTerrain.fs",
         "skybox.vs", "skybox.fs",
         "passthrough2d.vs", "passthrough2d.fs",
-        "priest-reachout.vs", "priest-reachout.fs"
+        "priest-reachout.vs", "priest-reachout.fs",
     };
     Shader shaders[SHADER_COUNT];
 
@@ -125,6 +125,7 @@ namespace resources {
         MATERIAL_UNLIT,
         MATERIAL_LIT,
         MATERIAL_LIT_INSTANCED,
+        MATERIAL_LIT_INSTANCED_TREE,
         MATERIAL_LIT_TERRAIN,
         MATERIAL_COUNT
     };
@@ -136,6 +137,7 @@ namespace resources {
         MODEL_DEFAULT_SPHERE,
         MODEL_DEFAULT_CYLINDER,
         MODEL_DEFAULT_CONE,
+        MODEL_DEFAULT_HEIGHTMAP,
         MODEL_DEFAULT_COUNT
     };
     enum GAME_MODELS {
@@ -153,7 +155,10 @@ namespace resources {
 
     enum GAME_TEXTURES {
         TEXTURE_STAR,
+        TEXTURE_GROUND,
         TEXTURE_NPATCH,
+        TEXTURE_TREE_MODEL,
+        TEXTURE_TERRAINMAP_LEVEL0,
         TEXTURE_REACHOUT_BACKGROUND,
         TEXTURE_REACHOUT_PRIEST,
         TEXTURE_FBM_VALUE_OCT5_128,
@@ -161,7 +166,10 @@ namespace resources {
     };
     const char *texturePaths[resources::TEXTURE_COUNT] = {
         "star.png",
+        "ground.png",
         "npatch.png",
+        "tree_model.png",
+        "terrainmap_level0.png",
         "reachout-background.png",
         "reachout-priest.png",
         "value_fbm_5oct_128.png"
@@ -171,6 +179,7 @@ namespace resources {
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
         IMAGE_HEIGHTMAP_LEVEL0,
+        IMAGE_TERRAINMAP_LEVEL0,
         IMAGE_HEIGHTMAP_LEVEL1,
         IMAGE_TERRAINMAP_LEVEL1,
         IMAGE_COUNT
@@ -178,8 +187,9 @@ namespace resources {
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
         "heightmap_level0.png",
+        "terrainmap_level0.png",
         "heightmap_level1.png",
-        "terrainmap_level1.png"
+        "terrainmap_level1.png",
     };
     Image images[IMAGE_COUNT];
 
@@ -337,7 +347,7 @@ i32 main() {
     DisableCursor();
 
     LoadGameResources();
-    MdEngineInit(1 << 16);
+    MdEngineInit(MEGABYTES(64));
     MdGameInit();
     MdDebugInit();
     
@@ -444,7 +454,7 @@ void SceneSetup01(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
         ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_LEVEL0];
+        mi->model = resources::models[resources::MODEL_DEFAULT_HEIGHTMAP];
         MdGameObjectAdd(go, count, obj);
     }
     MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAB, mp));
@@ -452,20 +462,56 @@ void SceneSetup01(GameObject* go, i32* count) {
 };
 void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
+    {
+        Heightmap* hm = MemoryReserve<Heightmap>(mp);
+        HeightmapGenerationInfo hgi = {};
+        hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL0];
+        hgi.resdiv = 0;
+        hgi.size = {100.f, 10.f, 100.f};
+        HeightmapInit(hm, hgi);
 
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
-        Cab* cab = (Cab*)obj.data;
-        cab->model = resources::models[resources::MODEL_CAB];
+        ForestGenerationInfo fgi = {};
+        fgi.density = 2.f;
+        fgi.heightmap = hm;
+        fgi.position = {0.f, 0.f};
+        fgi.size = {100.f, 100.f};
+        fgi.randomTiltDegrees = 10.f;
+        fgi.randomYDip = 1.f;
+        fgi.randomPositionOffset = 0.5f;
+        fgi.treeChance = 1.f;
+
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
+        InstanceRenderer* ir = (InstanceRenderer*)obj.data;
+        InstanceRendererCreate_InitForest(
+            ir,
+            resources::images[resources::IMAGE_TERRAINMAP_LEVEL0],
+            fgi,
+            resources::models[resources::MODEL_TREE].meshes[0],
+            resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
+            mp,
+            &mdEngine::scratchMemory);
         MdGameObjectAdd(go, count, obj);
     }
     {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
+        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
         ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
-        mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
+        mi->model = resources::models[resources::MODEL_DEFAULT_HEIGHTMAP];        
+        mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
         MdGameObjectAdd(go, count, obj);
     }
+    //{
+    //    GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
+    //    Cab* cab = (Cab*)obj.data;
+    //    cab->model = resources::models[resources::MODEL_CAB];
+    //    MdGameObjectAdd(go, count, obj);
+    //}
+    //{
+    //    GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
+    //    ModelInstance* mi = (ModelInstance*)obj.data;
+    //    mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
+    //    mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
+    //    MdGameObjectAdd(go, count, obj);
+    //}
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
         CameraManager* cm = (CameraManager*)obj.data;
@@ -494,6 +540,13 @@ void LoadGameMaterials() {
     mat.shader = sh;
     resources::materials[resources::MATERIAL_LIT_INSTANCED] = mat;
 
+    sh = LOAD_SHADER("lightInstanced.vs", "light.fs");
+    sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocationAttrib(sh, "instanceTransform");
+    mat = LoadMaterialDefault();
+    mat.shader = sh;
+    mat.maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_TREE_MODEL];
+    resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE] = mat;
+
     sh = LOAD_SHADER("light.vs", "light.fs");
     sh.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(sh, "modelMat");
     mat = LoadMaterialDefault();
@@ -511,25 +564,25 @@ void LoadGameMaterials() {
     sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
     mat = LoadMaterialDefault();
     mat.shader = sh;
+    mat.maps[SHADER_LOC_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_TERRAINMAP_LEVEL0];
+    mat.maps[SHADER_LOC_MAP_SPECULAR].texture = resources::textures[resources::TEXTURE_GROUND];
     resources::materials[resources::MATERIAL_LIT_TERRAIN] = mat;
 }
 void UpdateGameMaterials(v3 lightPosition) {
     float pos[3] = {lightPosition.x, lightPosition.y, lightPosition.z};
-    SetShaderValue(
-        resources::materials[resources::MATERIAL_LIT_INSTANCED].shader,
-        GetShaderLocation(resources::materials[resources::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
-    SetShaderValue(
-        resources::materials[resources::MATERIAL_LIT].shader,
-        GetShaderLocation(resources::materials[resources::MATERIAL_LIT].shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
-    SetShaderValue(
-        resources::materials[resources::MATERIAL_LIT_TERRAIN].shader,
-        GetShaderLocation(resources::materials[resources::MATERIAL_LIT_TERRAIN].shader, "lightPosition"),
-        (void*)pos,
-        SHADER_UNIFORM_VEC3);
+    i32 lightUpdateShaders[] = {
+        resources::MATERIAL_LIT,
+        resources::MATERIAL_LIT_INSTANCED,
+        resources::MATERIAL_LIT_INSTANCED_TREE,
+        resources::MATERIAL_LIT_TERRAIN
+    };
+    for (i32 i = 0; i < sizeof(lightUpdateShaders) / sizeof(i32); i++) {
+        SetShaderValue(
+            resources::materials[lightUpdateShaders[i]].shader,
+            GetShaderLocation(resources::materials[resources::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
+            (void*)pos,
+            SHADER_UNIFORM_VEC3);
+    }
 }
 void UnloadGameMaterials() {
     for (i32 i = 0; i < resources::MATERIAL_COUNT; i++) {
@@ -543,7 +596,9 @@ void LoadGameModels() {
     resources::models[resources::MODEL_DEFAULT_CYLINDER] = LoadModelFromMesh(GenMeshCylinder(1.f, 1.f, 16));
     resources::models[resources::MODEL_DEFAULT_PLANE] = LoadModelFromMesh(GenMeshPlane(1.f, 1.f, 1, 1));
     resources::models[resources::MODEL_DEFAULT_SPHERE] = LoadModelFromMesh(GenMeshSphere(1.f, 16, 16));
-    
+    // TODO: Temporary, please remove
+    resources::models[resources::MODEL_DEFAULT_HEIGHTMAP] = LoadModelFromMesh(GenMeshHeightmap(
+        resources::images[resources::IMAGE_HEIGHTMAP_LEVEL0], {100.f, 10.f, 100.f}));
     for (i32 i = 0; i < resources::MODEL_COUNT - resources::MODEL_DEFAULT_COUNT; i++) {
         resources::models[i + resources::MODEL_DEFAULT_COUNT] = LOAD_MODEL(resources::modelPaths[i]);
     }
@@ -593,17 +648,17 @@ void UnloadGameFonts() {
 
 void LoadGameResources() {
     LoadGameShaders();
+    LoadGameImages();
     LoadGameModels();
     LoadGameTextures();
-    LoadGameImages();
     LoadGameMaterials();
     LoadGameFonts();
 }
 void UnloadGameResources() {
     UnloadGameShaders();
+    UnloadGameImages();
     UnloadGameModels();
     UnloadGameTextures();
-    UnloadGameImages();
     UnloadGameMaterials();
     UnloadGameFonts();
 }
@@ -677,24 +732,17 @@ void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
     }
 }
 
-void InstanceMeshRenderDataDestroy(InstanceMeshRenderData imrd) {
-    UnloadModel(imrd._model);
-    UnloadMaterial(imrd.material);
-    // TODO: Double check if shader is unloaded as part of material
-    RL_FREE(imrd.transforms);
-}
-
-InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGenerationInfo info, Mesh mesh, Material material) {
+void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material material, MemoryPool* sceneMemory, MemoryPool* scratchMemory) {
     const i32 stride = PixelformatGetStride(image.format);
     if (stride < 3) {
-        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forst");
-        return {}; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
+        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forest");
+        return; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
     }
     const v2 imageSize = {(float)image.width, (float)image.height};
-    const i32 treesMax = (i32)ceilf((info.worldSize.x * info.density) * (info.worldSize.y * info.density));
+    const i32 treesMax = (i32)ceilf((info.size.x * info.density) * (info.size.y * info.density));
     i32 treeCount = 0;
-    mat4 *transforms = (mat4*)RL_CALLOC(treesMax, sizeof(mat4));
-    v2 pixelIncrF = imageSize / info.worldSize / info.density;
+    mat4 *transforms = (mat4*)MemoryReserve<mat4>(scratchMemory, treesMax);
+    v2 pixelIncrF = imageSize / info.size / info.density;
     const i32 incrx = pixelIncrF.x < 1.f ? 1 : (i32)floorf(pixelIncrF.x);
     const i32 incry = pixelIncrF.y < 1.f ? 1 : (i32)floorf(pixelIncrF.y);
     const byte* imageData = (byte*)image.data;
@@ -703,7 +751,7 @@ InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGen
             i32 i = (x + y * image.width) * stride;
             Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
             if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
-                v2 treePos = v2{(float)x, (float)y} / imageSize * info.worldSize + info.worldPosition;
+                v2 treePos = v2{(float)x, (float)y} / imageSize * info.size + info.position;
                 transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
                 transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
                 transforms[treeCount] *= MatrixTranslate(
@@ -715,18 +763,17 @@ InstanceMeshRenderData ForestInstanceMeshRenderDataCreate(Image image, ForestGen
         }
     }
 
-    float16 *transforms16 = (float16*)RL_CALLOC(treeCount, sizeof(float16));
+    float16 *transforms16 = MemoryReserve<float16>(sceneMemory, treeCount);
     for (i32 i = 0; i < treeCount; i++) {
         transforms16[i] = MatrixToFloatV(transforms[i]);
     }
-    RL_FREE(transforms);
 
-    InstanceMeshRenderData imrd = {};
-    imrd.instanceCount = treeCount;
-    imrd.transforms = transforms16;
-    imrd.mesh = mesh;
-    imrd.material = material;
-    return imrd;
+    irOut->instanceCount = treeCount;
+    irOut->transforms = transforms16;
+    irOut->mesh = mesh;
+    irOut->material = material;
+
+    MemoryPoolClear(scratchMemory);
 }
 
 void* CabCreate(MemoryPool* mp) {
