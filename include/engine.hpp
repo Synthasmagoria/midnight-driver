@@ -980,15 +980,15 @@ void MdEngineRegisterObjects() {
     MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
 
-void MdEngineInit(u64 memoryPoolSize) {
+void MdEngineInit(u64 scratchMemorySize, u64 sceneMemorySize, u64 persistentMemorySize, u64 engineMemorySize) {
     if (mdEngine::initialized) {
         return;
     }
     mdEngine::initialized = true;
-    mdEngine::scratchMemory = MemoryPoolCreate(memoryPoolSize);
-    mdEngine::sceneMemory = MemoryPoolCreate(memoryPoolSize);
-    mdEngine::persistentMemory = MemoryPoolCreate(memoryPoolSize);
-    mdEngine::engineMemory = MemoryPoolCreate(memoryPoolSize);
+    mdEngine::scratchMemory = MemoryPoolCreate(scratchMemorySize);
+    mdEngine::sceneMemory = MemoryPoolCreate(sceneMemorySize);
+    mdEngine::persistentMemory = MemoryPoolCreate(persistentMemorySize);
+    mdEngine::engineMemory = MemoryPoolCreate(engineMemorySize);
     mdEngine::eventHandler = EventHandlerCreate();
     // TODO: Generate this instead of loading it from disk
     mdEngine::missingTexture = LOAD_TEXTURE("missing_texture.png");
@@ -1551,9 +1551,9 @@ void EventHandlerCallEvent(void* caller, i32 ind, void* _args) {
     }
 }
 
-TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity) {
-    TypeList* list = (TypeList*)MemoryPoolReserve(memoryPool, sizeof(TypeList));
-    list->memoryProvider = memoryPool;
+TypeList* TypeListCreate(i32 typeIndex, MemoryPool* mp, i32 capacity) {
+    TypeList* list = MemoryReserve<TypeList>(mp);
+    list->memoryProvider = mp;
     list->typeIndex = typeIndex;
     list->bufferStride = TypeListTypeGetSize(typeIndex);
     list->size = 0;

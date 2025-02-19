@@ -59,6 +59,8 @@ struct CameraManager {
     Camera debugCamera;
     float debugCameraSpeed;
     i32 cameraMode;
+    static constexpr float debugCameraSpeedMin = 0.05f;
+    static constexpr float debugCameraSpeedMax = 5.f;
 };
 void* CameraManagerCreate(MemoryPool* mp);
 void CameraManagerUpdate(void* _camMan);
@@ -114,7 +116,7 @@ namespace resources {
         "unlitInstanced.vs", "passthrough.fs",
         "light.vs", "light.fs",
         "lightInstanced.vs", "light.fs",
-        "light.vs", "lightTerrain.fs",
+        "lightTerrain.vs", "lightTerrain.fs",
         "skybox.vs", "skybox.fs",
         "passthrough2d.vs", "passthrough2d.fs",
         "priest-reachout.vs", "priest-reachout.fs",
@@ -144,12 +146,14 @@ namespace resources {
         MODEL_CAB = MODEL_DEFAULT_COUNT,
         MODEL_TREE,
         MODEL_LEVEL0,
+        MODEL_LEVEL1,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "taxi.glb",
         "tree.glb",
-        "level0.glb"
+        "level0.glb",
+        "level1_road.glb"
     };
     Model models[MODEL_DEFAULT_COUNT + MODEL_COUNT];
 
@@ -159,6 +163,8 @@ namespace resources {
         TEXTURE_NPATCH,
         TEXTURE_TREE_MODEL,
         TEXTURE_TERRAINMAP_LEVEL0,
+        TEXTURE_HEIGHTMAP_LEVEL1,
+        TEXTURE_TERRAINMAP_LEVEL1,
         TEXTURE_REACHOUT_BACKGROUND,
         TEXTURE_REACHOUT_PRIEST,
         TEXTURE_FBM_VALUE_OCT5_128,
@@ -170,6 +176,8 @@ namespace resources {
         "npatch.png",
         "tree_model.png",
         "terrainmap_level0.png",
+        "heightmap_level1.png",
+        "terrainmap_level1.png",
         "reachout-background.png",
         "reachout-priest.png",
         "value_fbm_5oct_128.png"
@@ -222,6 +230,11 @@ namespace global {
     constexpr i32 GAME_OBJECT_MAX = 1000;
     GameObject gameObjects[GAME_OBJECT_MAX];
     i32 gameObjectCount;
+    struct {
+        float falloffDistance = 20.f;
+        float luminocity = 1.f;
+        v3 ambientColor = {0.08f, 0.08f, 0.12f};
+    } lighting;
 };
 
 namespace debug {
@@ -347,7 +360,11 @@ i32 main() {
     DisableCursor();
 
     LoadGameResources();
-    MdEngineInit(MEGABYTES(64));
+    MdEngineInit(
+        MEGABYTES(128),
+        MEGABYTES(128),
+        MEGABYTES(4),
+        MEGABYTES(4));
     MdGameInit();
     MdDebugInit();
     
@@ -463,28 +480,33 @@ void SceneSetup01(GameObject* go, i32* count) {
 void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
     {
+        BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL1].meshes[0]);
+        v3 level1_position = bb.min;
+        v3 level1_size = bb.max - bb.min;
+
         Heightmap* hm = MemoryReserve<Heightmap>(mp);
         HeightmapGenerationInfo hgi = {};
-        hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL0];
+        hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
         hgi.resdiv = 0;
-        hgi.size = {100.f, 10.f, 100.f};
+        hgi.size = level1_size;
+        hgi.position = level1_position;
         HeightmapInit(hm, hgi);
 
         ForestGenerationInfo fgi = {};
-        fgi.density = 2.f;
+        fgi.density = 0.01f;
         fgi.heightmap = hm;
-        fgi.position = {0.f, 0.f};
-        fgi.size = {100.f, 100.f};
+        fgi.position = {level1_position.x, level1_position.z};
+        fgi.size = {level1_size.x, level1_size.z};
         fgi.randomTiltDegrees = 10.f;
-        fgi.randomYDip = 1.f;
+        fgi.randomYDip = 2.f;
         fgi.randomPositionOffset = 0.5f;
-        fgi.treeChance = 1.f;
+        fgi.treeChance = 50.f;
 
         GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
         InstanceRenderer* ir = (InstanceRenderer*)obj.data;
         InstanceRendererCreate_InitForest(
             ir,
-            resources::images[resources::IMAGE_TERRAINMAP_LEVEL0],
+            resources::images[resources::IMAGE_TERRAINMAP_LEVEL1],
             fgi,
             resources::models[resources::MODEL_TREE].meshes[0],
             resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
@@ -495,7 +517,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
         ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_DEFAULT_HEIGHTMAP];        
+        mi->model = resources::models[resources::MODEL_LEVEL1];        
         mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
         MdGameObjectAdd(go, count, obj);
     }
@@ -570,18 +592,34 @@ void LoadGameMaterials() {
 }
 void UpdateGameMaterials(v3 lightPosition) {
     float pos[3] = {lightPosition.x, lightPosition.y, lightPosition.z};
-    i32 lightUpdateShaders[] = {
+    i32 lightUpdateMaterials[] = {
         resources::MATERIAL_LIT,
         resources::MATERIAL_LIT_INSTANCED,
         resources::MATERIAL_LIT_INSTANCED_TREE,
         resources::MATERIAL_LIT_TERRAIN
     };
-    for (i32 i = 0; i < sizeof(lightUpdateShaders) / sizeof(i32); i++) {
+    for (i32 i = 0; i < sizeof(lightUpdateMaterials) / sizeof(i32); i++) {
+        Shader shader = resources::materials[lightUpdateMaterials[i]].shader;
         SetShaderValue(
-            resources::materials[lightUpdateShaders[i]].shader,
-            GetShaderLocation(resources::materials[resources::MATERIAL_LIT_INSTANCED].shader, "lightPosition"),
+            shader,
+            GetShaderLocation(shader, "lightPosition"),
             (void*)pos,
             SHADER_UNIFORM_VEC3);
+        SetShaderValue(
+            shader,
+            GetShaderLocation(shader, "lightFalloffDistance"),
+            &global::lighting.falloffDistance,
+            SHADER_UNIFORM_FLOAT);
+        SetShaderValue(
+            shader,
+            GetShaderLocation(shader, "lightAmbientColor"),
+            &global::lighting.ambientColor.x,
+            SHADER_UNIFORM_VEC3);
+        SetShaderValue(
+            shader,
+            GetShaderLocation(shader, "lightLuminocity"),
+            &global::lighting.luminocity,
+            SHADER_UNIFORM_FLOAT);
     }
 }
 void UnloadGameMaterials() {
@@ -692,6 +730,11 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
             MdGameObjectAdd(gameObjects, gameObjectCount, obj);
         }
     }
+    if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat("Falloff distance", &global::lighting.falloffDistance, 0.1f);
+        ImGui::DragFloat3("Ambient Color", &global::lighting.ambientColor.x, 0.05f, 0.f, 1.f);
+        ImGui::DragFloat("Luminocity", &global::lighting.luminocity, 0.05f);
+    }
 }
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
@@ -735,7 +778,7 @@ void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
 void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material material, MemoryPool* sceneMemory, MemoryPool* scratchMemory) {
     const i32 stride = PixelformatGetStride(image.format);
     if (stride < 3) {
-        TraceLog(LOG_WARNING, "ForestCreate: Passed Image isn't valid for creating a forest");
+        TraceLog(LOG_WARNING, TextFormat("%s: Passed Image isn't valid for creating a forest", nameof(InstanceRendererCreate_InitForest)));
         return; // TODO: Implement renderable default data for when InstanceMeshRenderData creation fails
     }
     const v2 imageSize = {(float)image.width, (float)image.height};
@@ -743,15 +786,36 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
     i32 treeCount = 0;
     mat4 *transforms = (mat4*)MemoryReserve<mat4>(scratchMemory, treesMax);
     v2 pixelIncrF = imageSize / info.size / info.density;
-    const i32 incrx = pixelIncrF.x < 1.f ? 1 : (i32)floorf(pixelIncrF.x);
-    const i32 incry = pixelIncrF.y < 1.f ? 1 : (i32)floorf(pixelIncrF.y);
+    //const i32 incrx = pixelIncrF.x < 1.f ? 1 : (i32)floorf(pixelIncrF.x);
+    //const i32 incry = pixelIncrF.y < 1.f ? 1 : (i32)floorf(pixelIncrF.y);
     const byte* imageData = (byte*)image.data;
-    for (i32 x = 0; x < image.width; x += incrx) {
-        for (i32 y = 0; y < image.height; y += incry) {
-            i32 i = (x + y * image.width) * stride;
-            Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
-            if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
-                v2 treePos = v2{(float)x, (float)y} / imageSize * info.size + info.position;
+    for (float x = 0; x < info.size.x; x += 1.f / info.density) {
+        for (float y = 0; y < info.size.y; y += 1.f / info.density) {
+            v2 imagePosition = v2{x, y} / info.size * imageSize;
+            i32 imagePositionX = (i32)imagePosition.x;
+            i32 imagePositionY = (i32)imagePosition.y;
+            if (imagePositionX + 1 >= (i32)imageSize.x &&
+                imagePositionY + 1 >= (i32)imageSize.y) {
+                continue;
+            }
+
+            i32 itl = (imagePositionX + imagePositionY * image.width) * stride;
+            i32 itr = ((imagePositionX + 1) + imagePositionY * image.width) * stride;
+            i32 ibl = (imagePositionX + imagePositionY * image.width) * stride;
+            i32 ibr = ((imagePositionX + 1) + (imagePositionY + 1) * image.width) * stride;
+            Color colorTl = {imageData[itl], imageData[itl+1], imageData[itl+2], 255};
+            Color colorTr = {imageData[itr], imageData[itr+1], imageData[itr+2], 255};
+            Color colorBl = {imageData[ibl], imageData[ibl+1], imageData[ibl+2], 255};
+            Color colorBr = {imageData[ibr], imageData[ibr+1], imageData[ibr+2], 255};
+            
+            v2 imagePositionFactor = Vector2Fract(imagePosition);
+            Color colorHorizontalTop = ColorLerp(colorTl, colorTr, imagePositionFactor.x);
+            Color colorHorizontalBottom = ColorLerp(colorBl, colorBr, imagePositionFactor.x);
+            Color colorFinal = ColorLerp(colorHorizontalTop, colorHorizontalBottom, imagePositionFactor.y);
+
+            float localTreeChance = (float)colorFinal.g / 255.f * 100.f;
+            if (GetRandomChanceF(localTreeChance * info.treeChance)) {
+                v2 treePos = v2{x, y};
                 transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
                 transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
                 transforms[treeCount] *= MatrixTranslate(
@@ -761,6 +825,32 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
                 treeCount++;
             }
         }
+    }
+
+    //for (i32 x = 0; x < image.width; x += incrx) {
+    //    for (i32 y = 0; y < image.height; y += incry) {
+    //        i32 i = (x + y * image.width) * stride;
+    //        Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
+    //        if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
+    //            v2 treePos = v2{(float)x, (float)y} / imageSize * info.size + info.position;
+    //            transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
+    //            transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
+    //            transforms[treeCount] *= MatrixTranslate(
+    //                treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
+    //                GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
+    //                treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
+    //            treeCount++;
+    //        }
+    //    }
+    //}
+
+    if (treeCount == 0) {
+        TraceLog(LOG_WARNING, "%s: Didn't generate any trees", nameof(InstanceRendererCreate_InitForest));
+        irOut->instanceCount = 0;
+        irOut->transforms = nullptr;
+        irOut->mesh = mesh;
+        irOut->material = material;
+        return;
     }
 
     float16 *transforms16 = MemoryReserve<float16>(sceneMemory, treeCount);
@@ -906,7 +996,10 @@ void CameraManagerUpdate(void* _camMan) {
     }
 
     v2 mouseScroll = GetMouseWheelMoveV();
-    camMan->debugCameraSpeed = fclampf(camMan->debugCameraSpeed + mouseScroll.y * 0.01f, 0.05f, 1.f);
+    camMan->debugCameraSpeed = fclampf(
+        camMan->debugCameraSpeed + mouseScroll.y * 0.01f,
+        camMan->debugCameraSpeedMin,
+        camMan->debugCameraSpeedMax);
     if (camMan->cameraMode) {
         CameraUpdateDebug(&camMan->debugCamera, camMan->debugCameraSpeed);
         global::currentCamera = &camMan->debugCamera;
