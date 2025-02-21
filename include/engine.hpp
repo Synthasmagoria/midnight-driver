@@ -20,6 +20,7 @@
 #include <string>
 
 #include "typedefs.hpp"
+#include "shadinclude.hpp"
 
 #define nameof(x) #x
 #define FRAME_TIME 1.f / 60.f
@@ -33,7 +34,22 @@
 #define struct_internal static // when used in a struct definition
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
-#define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
+inline Shader LOAD_SHADER(const char* vsPath, const char* fsPath) {
+    std::string vsCodeStr = Shadinclude::load(std::string(TextFormat("resources/shaders/%s", vsPath)));
+    std::string fsCodeStr = Shadinclude::load(std::string(TextFormat("resources/shaders/%s", fsPath)));
+    if (vsCodeStr.empty() || fsCodeStr.empty()) {
+        if (vsCodeStr.empty()) {
+            TraceLog(LOG_ERROR, TextFormat("%s: Couldn't load vertex shader '%s'", nameof(LOAD_SHADER), vsPath));
+        }
+        if (fsCodeStr.empty()) {
+            TraceLog(LOG_ERROR, TextFormat("%s: Couldn't load fragment shader '%s'", nameof(LOAD_SHADER), fsPath));
+        }
+        return {};
+    }
+    const char* vsCode = vsCodeStr.c_str();
+    const char* fsCode = fsCodeStr.c_str();
+    return LoadShaderFromMemory(vsCode, fsCode);
+}
 #define LOAD_TEXTURE(path)(LoadTexture(TextFormat("resources/textures/%s", path)))
 #define LOAD_IMAGE(path)(LoadImage(TextFormat("resources/textures/%s", path)))
 #define LOAD_FONT(path)(LoadFont(TextFormat("resources/fonts/%s", path)))

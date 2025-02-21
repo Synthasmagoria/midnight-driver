@@ -13,7 +13,6 @@
 
 #include "typedefs.hpp"
 #include "engine.hpp"
-#include "shadinclude.hpp"
 
 /*
     Game objects
