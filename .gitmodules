@@ -1,0 +1,3 @@
+[submodule "resources/shaders/lygia"]
+	path = resources/shaders/lygia
+	url = https://github.com/patriciogonzalezvivo/lygia.git
