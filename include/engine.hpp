@@ -839,7 +839,7 @@ struct InstanceRenderer {
     float16 *transforms;
     i32 instanceCount;
     Mesh mesh;
-    Material material;
+    Material* material;
 };
 void* InstanceRendererCreate(MemoryPool* mp);
 void InstanceRendererDraw3d(void* _is);
@@ -887,9 +887,9 @@ void ModelInstanceDrawImGui(void* _mi);
 
 #define PARTICLE_SYSTEM_MAX_PARTICLES 512
 struct ParticleSystem {
-    mat4 *_transforms;
+    mat4* _transforms;
     Mesh _quad;
-    Material _material;
+    Material* _material;
     v3 velocity;
     i32 count;
 };
@@ -901,6 +901,7 @@ void ParticleSystemDraw3d(void* psys);
 struct TextureInstance {
     Color tint;
     v2 origin;
+    Shader* shader;
     Texture* _texture;
     float _rotation;
     v2 _position;
@@ -920,10 +921,13 @@ void TextureInstanceSetPosition(TextureInstance* ti, v2 position);
 
 struct Skybox {
     Model model;
-    Shader shader;
+    Shader* shader;
+    Texture _texture;
 };
 void* SkyboxCreate(MemoryPool* mp);
-void SkyboxDraw3d(void* _skybox);
+void SkyboxInit(Skybox* sb, Shader* shader, Image* image);
+void SkyboxDraw3d(void* _sb);
+void SkyboxFree(void* _sb);
 
 /*
     Engine dependent utility definitions
@@ -947,6 +951,7 @@ namespace mdEngine {
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
     GameObjectDefinition gameObjectDefinitions[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
     bool gameObjectIsDefined[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
+    Shader passthroughShader;
 };
 
 enum MD_GAME_ENGINE_OBJECTS {
@@ -1000,6 +1005,107 @@ void MdEngineRegisterObjects() {
     MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
 
+Shader MdEngineLoadPassthroughShader() {
+    // Vertex shader directly defined, no external file required
+    const char *defaultVShaderCode =
+#if defined(GRAPHICS_API_OPENGL_21)
+    "#version 120                       \n"
+    "attribute vec3 vertexPosition;     \n"
+    "attribute vec2 vertexTexCoord;     \n"
+    "attribute vec4 vertexColor;        \n"
+    "varying vec2 fragTexCoord;         \n"
+    "varying vec4 fragColor;            \n"
+#elif defined(GRAPHICS_API_OPENGL_33)
+    "#version 330                       \n"
+    "in vec3 vertexPosition;            \n"
+    "in vec2 vertexTexCoord;            \n"
+    "in vec4 vertexColor;               \n"
+    "out vec2 fragTexCoord;             \n"
+    "out vec4 fragColor;                \n"
+#endif
+
+#if defined(GRAPHICS_API_OPENGL_ES3)
+    "#version 300 es                    \n"
+    "precision mediump float;           \n"     // Precision required for OpenGL ES3 (WebGL 2) (on some browsers)
+    "in vec3 vertexPosition;            \n"
+    "in vec2 vertexTexCoord;            \n"
+    "in vec4 vertexColor;               \n"
+    "out vec2 fragTexCoord;             \n"
+    "out vec4 fragColor;                \n"
+#elif defined(GRAPHICS_API_OPENGL_ES2)
+    "#version 100                       \n"
+    "precision mediump float;           \n"     // Precision required for OpenGL ES2 (WebGL) (on some browsers)
+    "attribute vec3 vertexPosition;     \n"
+    "attribute vec2 vertexTexCoord;     \n"
+    "attribute vec4 vertexColor;        \n"
+    "varying vec2 fragTexCoord;         \n"
+    "varying vec4 fragColor;            \n"
+#endif
+
+    "uniform mat4 mvp;                  \n"
+    "void main()                        \n"
+    "{                                  \n"
+    "    fragTexCoord = vertexTexCoord; \n"
+    "    fragColor = vertexColor;       \n"
+    "    gl_Position = mvp*vec4(vertexPosition, 1.0); \n"
+    "}                                  \n";
+
+    // Fragment shader directly defined, no external file required
+    const char *defaultFShaderCode =
+#if defined(GRAPHICS_API_OPENGL_21)
+    "#version 120                       \n"
+    "varying vec2 fragTexCoord;         \n"
+    "varying vec4 fragColor;            \n"
+    "uniform sampler2D texture0;        \n"
+    "uniform vec4 colDiffuse;           \n"
+    "void main()                        \n"
+    "{                                  \n"
+    "    vec4 texelColor = texture2D(texture0, fragTexCoord); \n"
+    "    gl_FragColor = texelColor*colDiffuse*fragColor;      \n"
+    "}                                  \n";
+#elif defined(GRAPHICS_API_OPENGL_33)
+    "#version 330       \n"
+    "in vec2 fragTexCoord;              \n"
+    "in vec4 fragColor;                 \n"
+    "out vec4 finalColor;               \n"
+    "uniform sampler2D texture0;        \n"
+    "uniform vec4 colDiffuse;           \n"
+    "void main()                        \n"
+    "{                                  \n"
+    "    vec4 texelColor = texture(texture0, fragTexCoord);   \n"
+    "    finalColor = texelColor*colDiffuse*fragColor;        \n"
+    "}                                  \n";
+#endif
+
+#if defined(GRAPHICS_API_OPENGL_ES3)
+    "#version 300 es                    \n"
+    "precision mediump float;           \n"     // Precision required for OpenGL ES3 (WebGL 2)
+    "in vec2 fragTexCoord;              \n"
+    "in vec4 fragColor;                 \n"
+    "out vec4 finalColor;               \n"
+    "uniform sampler2D texture0;        \n"
+    "uniform vec4 colDiffuse;           \n"
+    "void main()                        \n"
+    "{                                  \n"
+    "    vec4 texelColor = texture(texture0, fragTexCoord);   \n"
+    "    finalColor = texelColor*colDiffuse*fragColor;        \n"
+    "}                                  \n";
+#elif defined(GRAPHICS_API_OPENGL_ES2)
+    "#version 100                       \n"
+    "precision mediump float;           \n"     // Precision required for OpenGL ES2 (WebGL)
+    "varying vec2 fragTexCoord;         \n"
+    "varying vec4 fragColor;            \n"
+    "uniform sampler2D texture0;        \n"
+    "uniform vec4 colDiffuse;           \n"
+    "void main()                        \n"
+    "{                                  \n"
+    "    vec4 texelColor = texture2D(texture0, fragTexCoord); \n"
+    "    gl_FragColor = texelColor*colDiffuse*fragColor;      \n"
+    "}                                  \n";
+#endif
+    return LoadShaderFromMemory(defaultVShaderCode, defaultFShaderCode);
+}
+
 void MdEngineInit(u64 scratchMemorySize, u64 sceneMemorySize, u64 persistentMemorySize, u64 engineMemorySize) {
     if (mdEngine::initialized) {
         return;
@@ -1010,6 +1116,7 @@ void MdEngineInit(u64 scratchMemorySize, u64 sceneMemorySize, u64 persistentMemo
     mdEngine::persistentMemory = MemoryPoolCreate(persistentMemorySize);
     mdEngine::engineMemory = MemoryPoolCreate(engineMemorySize);
     mdEngine::eventHandler = EventHandlerCreate();
+    mdEngine::passthroughShader = MdEngineLoadPassthroughShader();
     // TODO: Generate this instead of loading it from disk
     mdEngine::missingTexture = LOAD_TEXTURE("missing_texture.png");
     MdEngineRegisterObjects();
@@ -2064,7 +2171,7 @@ void* InstanceRendererCreate(MemoryPool* mp) {
 }
 void InstanceRendererDraw3d(void* _is) {
     InstanceRenderer* is = (InstanceRenderer*)_is;
-    DrawMeshInstancedOptimized(is->mesh, is->material, is->transforms, is->instanceCount);
+    DrawMeshInstancedOptimized(is->mesh, *is->material, is->transforms, is->instanceCount);
 }
 
 void* ModelInstanceCreate(MemoryPool* mp) {
@@ -2110,12 +2217,13 @@ void ParticleSystemUpdate(void* _psys) {
 }
 void ParticleSystemDraw3d(void* _psys) {
     ParticleSystem* psys = (ParticleSystem*)_psys;
-    DrawMeshInstanced(psys->_quad, psys->_material, psys->_transforms, psys->count);
+    DrawMeshInstanced(psys->_quad, *psys->_material, psys->_transforms, psys->count);
 }
 
 void* TextureInstanceCreate(MemoryPool* mp) {
     TextureInstance* ti = MemoryReserve<TextureInstance>(mp);
     Texture* tex = &mdEngine::missingTexture;
+    ti->shader = &mdEngine::passthroughShader;
     ti->_texture = tex;
     ti->_position = {0.f, 0.f};
     ti->origin = {0.f, 0.f};
@@ -2141,19 +2249,41 @@ void TextureInstanceSetPosition(TextureInstance* ti, v2 position) {
 }
 void TextureInstanceDrawUi(void* _ti) {
     TextureInstance* ti = (TextureInstance*)_ti;
+    BeginShaderMode(*ti->shader);
     DrawTexturePro(*ti->_texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->_rotation, ti->tint);
+    EndShaderMode();
 }
 
 void* SkyboxCreate(MemoryPool* mp) {
     Skybox* sb = MemoryReserve<Skybox>(mp);
     return sb;
 }
-void SkyboxDraw3d(void* _skybox) {
-    Skybox* skybox = (Skybox*)_skybox;
+void SkyboxInit(Skybox* sb, Shader* shader, Image* image) {
+    sb->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
+    sb->shader = shader;
+    {
+        i32 envmapValue = MATERIAL_MAP_CUBEMAP;
+        SetShaderValue(*sb->shader, GetShaderLocation(*sb->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
+        i32 gammaValue = 0;
+        SetShaderValue(*sb->shader, GetShaderLocation(*sb->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
+        i32 vflippedValue = 0;
+        SetShaderValue(*sb->shader, GetShaderLocation(*sb->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
+    }
+    sb->model.materials[0].shader = *sb->shader;
+    sb->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
+        *image,
+        CUBEMAP_LAYOUT_AUTO_DETECT);
+}
+void SkyboxDraw3d(void* _sb) {
+    Skybox* sb = (Skybox*)_sb;
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
-        DrawModel(skybox->model, {0.f}, 1.0f, WHITE);
+        DrawModel(sb->model, {0.f}, 1.0f, WHITE);
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
+}
+void SkyboxFree(void* _sb) {
+    Skybox* sb = (Skybox*)_sb;
+    UnloadTexture(sb->_texture);
 }
 #endif // __MD_ENGINE_H

@@ -107,8 +107,16 @@ namespace resources {
         SHADER_LIT_INSTANCED,
         SHADER_LIT_TERRAIN,
         SHADER_SKYBOX,
-        SHADER_PASSTHROUGH_2D,
-        SHADER_PRIEST_REACHOUT_2D,
+        SHADER_PASSTHROUGH,
+        SHADER_PRIEST_REACHOUT_00,
+        SHADER_PRIEST_REACHOUT_01,
+        SHADER_PRIEST_REACHOUT_02,
+        SHADER_PRIEST_REACHOUT_03,
+        SHADER_PRIEST_REACHOUT_04,
+        SHADER_PRIEST_REACHOUT_05,
+        SHADER_PRIEST_REACHOUT_06,
+        SHADER_PRIEST_REACHOUT_07,
+        SHADER_PRIEST_REACHOUT_08,
         SHADER_COUNT
     };
     const char *shaderPaths[SHADER_COUNT * 2] = {
@@ -117,8 +125,16 @@ namespace resources {
         "lightInstanced.vs", "lightInstanced.fs",
         "lightTerrain.vs", "lightTerrain.fs",
         "skybox.vs", "skybox.fs",
-        "passthrough2d.vs", "passthrough2d.fs",
-        "priestReachout.vs", "priestReachout.fs",
+        "passthrough.vs", "passthrough.fs",
+        "priestReachout_00.vs", "priestReachout_00.fs",
+        "priestReachout_01.vs", "priestReachout_01.fs",
+        "priestReachout_02.vs", "priestReachout_02.fs",
+        "priestReachout_03.vs", "priestReachout_03.fs",
+        "priestReachout_04.vs", "priestReachout_04.fs",
+        "priestReachout_05.vs", "priestReachout_05.fs",
+        "priestReachout_06.vs", "priestReachout_06.fs",
+        "priestReachout_07.vs", "priestReachout_07.fs",
+        "priestReachout_08.vs", "priestReachout_08.fs",
     };
     Shader shaders[SHADER_COUNT];
 
@@ -465,22 +481,8 @@ void SceneSetup01(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_SKYBOX, mp);
         Skybox* sb = (Skybox*)obj.data;
+        SkyboxInit(sb, &resources::shaders[resources::SHADER_SKYBOX], &resources::images[resources::IMAGE_SKYBOX]);
         MdGameObjectAdd(go, count, obj);
-
-        sb->model = LoadModelFromMesh(GenMeshCube(1.f, 1.f, 1.f));
-        sb->shader = resources::shaders[resources::SHADER_SKYBOX];
-        {
-            i32 envmapValue = MATERIAL_MAP_CUBEMAP;
-            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "environmentMap"), &envmapValue, SHADER_UNIFORM_INT);
-            i32 gammaValue = 0;
-            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "doGamma"), &gammaValue, SHADER_UNIFORM_INT);
-            i32 vflippedValue = 0;
-            SetShaderValue(sb->shader, GetShaderLocation(sb->shader, "vflipped"), &vflippedValue, SHADER_UNIFORM_INT);
-        }
-        sb->model.materials[0].shader = sb->shader;
-        sb->model.materials[0].maps[MATERIAL_MAP_CUBEMAP].texture = LoadTextureCubemap(
-            resources::images[resources::IMAGE_SKYBOX],
-            CUBEMAP_LAYOUT_AUTO_DETECT);
     }
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
@@ -496,6 +498,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -503,6 +506,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_01];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_01_MIDDLE_GROUND]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -510,6 +514,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_02];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_02_FENCE]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -517,6 +522,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_03];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_03_BODY_MASK]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -524,6 +530,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_04];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_04_BODY_DETAIL]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -531,6 +538,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_05];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_05_ARM_MASK]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -538,6 +546,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_06];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_06_ARM_DETAIL]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -545,6 +554,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_07];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_07_CROSS]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -552,6 +562,7 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     {
         GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
         TextureInstance* ti = (TextureInstance*)obj.data;
+        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_08];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_08_FOREGROUND]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
         MdGameObjectAdd(go, count, obj);
@@ -800,10 +811,10 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
             &mdEngine::persistentMemory.location,
             &mdEngine::persistentMemory.size));
         // TODO: Make sure this works
-        //if (ImGui::Button("Reload shaders")) {
-        //    UnloadGameShaders();
-        //    LoadGameShaders();
-        //}
+        if (ImGui::Button("Reload shaders")) {
+            UnloadGameShaders();
+            LoadGameShaders();
+        }
     }
     if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Combo("Objects", &debug::instanceableObjectSelection, debug::instanceableObjectNames);
@@ -933,7 +944,7 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
         irOut->instanceCount = 0;
         irOut->transforms = nullptr;
         irOut->mesh = mesh;
-        irOut->material = material;
+        irOut->material = &material;
         return;
     }
 
@@ -945,7 +956,7 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
     irOut->instanceCount = treeCount;
     irOut->transforms = transforms16;
     irOut->mesh = mesh;
-    irOut->material = material;
+    irOut->material = &material;
 
     MemoryPoolClear(scratchMemory);
 }
