@@ -30,6 +30,7 @@
 #define GIGABYTES(bytes)(bytes * 1000000000)
 #define global_variable static // when used in global scope
 #define local_persist static // when used inside a function
+#define struct_internal static // when used in a struct definition
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
@@ -51,20 +52,21 @@ enum MD_TRANSFORM_ROTATION_ORDER {
     TRANSFORM_ROTATION_ORDER_ZXY,
     TRANSFORM_ROTATION_ORDER_ZYX
 };
-static const char* mdTransformRotationOrderNames[] = {
-    "xyz",
-    "xzy",
-    "yxz",
-    "yzx",
-    "zxy",
-    "zyx\0"
-};
 struct MdTransform {
     v3 _translation;
     v3 _scale;
     v3 _rotation;
     mat4 matrix;
     i32 rotationOrder;
+    struct_internal const char* mdTransformRotationOrderNames[];
+};
+const char* MdTransform::mdTransformRotationOrderNames[] = {
+    "xyz",
+    "xzy",
+    "yxz",
+    "yzx",
+    "zxy",
+    "zyx\0"
 };
 MdTransform TransformCreate() {
     MdTransform transform = {};
@@ -133,7 +135,7 @@ void TransformDrawImGui(MdTransform* transform) {
     if (ImGui::DragFloat3("Rotation", (float*)&transform->_rotation, 0.05f)) {
         TransformUpdate(transform);
     }
-    if (ImGui::Combo("Rotation Order", &transform->rotationOrder, mdTransformRotationOrderNames[0])) {
+    if (ImGui::Combo("Rotation Order", &transform->rotationOrder, MdTransform::mdTransformRotationOrderNames[0])) {
         TransformUpdate(transform);
     }
 }
@@ -678,7 +680,7 @@ struct GameObject {
     const char* objectName;
     const char* instanceName;
     i32 id;
-    static i32 idCounter;
+    struct_internal i32 idCounter;
     bool visible;
     bool active;
 };
@@ -881,11 +883,11 @@ void ParticleSystemUpdate(void* psys);
 void ParticleSystemDraw3d(void* psys);
 
 struct TextureInstance {
-    Texture* texture;
-    float rotation;
-    v2 position;
-    v2 origin;
     Color tint;
+    v2 origin;
+    Texture* _texture;
+    float _rotation;
+    v2 _position;
     v2 _scale;
     rect2 _drawSource;
     rect2 _drawDestination;
@@ -1012,6 +1014,8 @@ GameObject MdEngineInstanceGameObject(i32 ind, MemoryPool* mp, const char* insta
     go.DrawImGui = def.DrawImGui;
     go.Free = def.Free;
     go.Update = def.Update;
+    go.id = GameObject::idCounter;
+    GameObject::idCounter++;
     return go;
 }
 
@@ -2096,10 +2100,10 @@ void ParticleSystemDraw3d(void* _psys) {
 void* TextureInstanceCreate(MemoryPool* mp) {
     TextureInstance* ti = MemoryReserve<TextureInstance>(mp);
     Texture* tex = &mdEngine::missingTexture;
-    ti->texture = tex;
-    ti->position = {0.f, 0.f};
+    ti->_texture = tex;
+    ti->_position = {0.f, 0.f};
     ti->origin = {0.f, 0.f};
-    ti->rotation = 0.f;
+    ti->_rotation = 0.f;
     ti->tint = WHITE;
     ti->_drawSource = {0.f, 0.f, (float)tex->width, (float)tex->height};
     ti->_drawDestination = {0.f, 0.f, (float)tex->width, (float)tex->height};
@@ -2107,7 +2111,7 @@ void* TextureInstanceCreate(MemoryPool* mp) {
     return ti;
 }
 void TextureInstanceSetTexture(TextureInstance* ti, Texture* texture) {
-    ti->texture = texture;
+    ti->_texture = texture;
     ti->_drawSource = {0.f, 0.f, (float)texture->width, (float)texture->height};
 }
 void TextureInstanceSetSize(TextureInstance* ti, v2 size) {
@@ -2117,11 +2121,11 @@ void TextureInstanceSetSize(TextureInstance* ti, v2 size) {
 void TextureInstanceSetPosition(TextureInstance* ti, v2 position) {
     ti->_drawDestination.x = position.x;
     ti->_drawDestination.y = position.y;
-    ti->position = position;
+    ti->_position = position;
 }
 void TextureInstanceDrawUi(void* _ti) {
     TextureInstance* ti = (TextureInstance*)_ti;
-    DrawTexturePro(*ti->texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->rotation, ti->tint);
+    DrawTexturePro(*ti->_texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->_rotation, ti->tint);
 }
 
 void* SkyboxCreate(MemoryPool* mp) {
