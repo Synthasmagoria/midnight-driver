@@ -522,7 +522,7 @@ inline void DrawCrosshair(i32 x, i32 y, Color col) {
 }
 
 /*
-    Engine
+    Engine (raylib dependency only)
 */
 // TODO: Decouple memory allocation calls.
 struct MemoryPool {
@@ -531,13 +531,14 @@ struct MemoryPool {
     u64 size;
 };
 MemoryPool MemoryPoolCreate(u64 size);
-void MemoryPoolDestroy(MemoryPool* mm);
-void* MemoryPoolReserve(MemoryPool* mm, u64 size);
-void MemoryPoolClear(MemoryPool* mm);
+MemoryPool MemoryPoolCreateInsideMemoryPool(MemoryPool* srcMp, u64 size);
+void MemoryPoolDestroy(MemoryPool* mp);
+void* MemoryPoolReserve(MemoryPool* mp, u64 size);
+void MemoryPoolClear(MemoryPool* mp);
 template <typename T>
-T* MemoryReserve(MemoryPool* mm);
+T* MemoryReserve(MemoryPool* mp);
 template <typename T>
-T* MemoryReserve(MemoryPool* mm, u64 size);
+T* MemoryReserve(MemoryPool* mp, u64 size);
 
 struct TextDrawingStyle {
     Color color;
@@ -665,6 +666,8 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point);
 /*
     Engine (Dependency depth 1)
 */
+struct VariableDynamicBuffer;
+struct GameObjectDefinition;
 struct GameObject;
 struct StringList;
 struct EventArgs_TypewriterLineComplete;
@@ -674,6 +677,21 @@ struct Typewriter;
 struct DialogueOptions;
 struct Heightmap;
 struct InstanceRenderer;
+
+// TODO: Consider creating a list that returns variable dynamic buffer entries rather than having 3 separate lists
+struct VariableDynamicBuffer {
+    i32 variableCount;
+    TypeList* types;
+    TypeList* locations;
+    MemoryPool memoryPool;
+};
+struct VariableDynamicBufferEntryInfo {
+    i32 type;
+    i32 location;
+};
+VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp, i32 size);
+// TODO: Unify this with the TypeList types
+void VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type);
 
 typedef void*(*GameInstanceCreateFunctionSignature)(MemoryPool*);
 struct GameObjectDefinition {
@@ -685,13 +703,20 @@ struct GameObjectDefinition {
     void (*DrawImGui) (void*);
     const char* objectName;
 };
+struct GameObjectInstanceVariable {
+    void* value;
+    i32 type;
+};
 GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp);
 struct GameObject {
     void (*Update) (void*);
+    void (*UpdateScript) (void*);
     void (*Draw3d) (void*);
     void (*DrawUi) (void*);
     void (*Free) (void*);
     void (*DrawImGui) (void*);
+    std::unordered_map<std::string, GameObjectInstanceVariable*> variables;
+    void* variableData;
     void* data;
     const char* objectName;
     const char* instanceName;
@@ -746,14 +771,7 @@ struct TypeList {
     i32 capacity;
     i32 typeIndex;
 };
-enum TYPE_LIST_TYPE {
-    TYPE_LIST_I32,
-    TYPE_LIST_PTR,
-    TYPE_LIST_GAME_OBJECT_DEFINITION,
-    __TYPE_LIST_TYPE_COUNT
-};
 TypeList* TypeListCreate(i32 typeIndex, MemoryPool* memoryPool, i32 capacity = 5);
-i32 TypeListTypeGetSize(i32 typeIndex);
 void TypeListSetCapacity(TypeList* list, i32 capacity);
 void TypeListGrowCapacityIfLimitReached(TypeList* list);
 void TypeListResize(TypeList* list, i32 size);
@@ -938,6 +956,26 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm);
     Init
 */
 #define _MD_GAME_ENGINE_OBJECT_COUNT_MAX 500
+
+enum MD_TYPES {
+    MD_TYPE_I32,
+    MD_TYPE_PTR,
+    MD_TYPE_GAME_OBJECT_DEFINITION,
+    MD_TYPE_COUNT
+};
+i32 MdTypeGetSize(i32 type) {
+    switch (type) {
+        case MD_TYPE_I32:
+            return sizeof(i32);
+        case MD_TYPE_PTR:
+            return sizeof(void*);
+        case MD_TYPE_GAME_OBJECT_DEFINITION:
+            return sizeof(GameObjectDefinition);
+        default:
+            return -1;
+            break;
+    }
+}
 
 namespace mdEngine {
     bool initialized = false;
@@ -1157,40 +1195,47 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm) {
     Engine function implementations
 */
 MemoryPool MemoryPoolCreate(u64 size) {
-    MemoryPool mm = {};
-    mm.buffer = calloc(size, sizeof(byte));
-    mm.location = 0;
-    mm.size = size;
-    return mm;
+    MemoryPool mp = {};
+    mp.buffer = calloc(size, sizeof(byte));
+    mp.location = 0;
+    mp.size = size;
+    return mp;
 }
-void MemoryPoolDestroy(MemoryPool* mm) {
-    if (mm->buffer != nullptr) {
-        free(mm->buffer);
+MemoryPool MemoryPoolCreateInsideMemoryPool(MemoryPool* srcMp, u64 size) {
+    MemoryPool mp = {};
+    mp.buffer = MemoryPoolReserve(srcMp, size);
+    mp.location = 0;
+    mp.size = size;
+    return mp;
+}
+void MemoryPoolDestroy(MemoryPool* mp) {
+    if (mp->buffer != nullptr) {
+        free(mp->buffer);
     }
 }
-void* MemoryPoolReserve(MemoryPool* mm, u64 size) {
-    assert(mm->location + size < mm->size); // Out of memory check
+void* MemoryPoolReserve(MemoryPool* mp, u64 size) {
+    assert(mp->location + size < mp->size); // Out of memory check
     assert(size > 0);
-    void* reserve = (byte*)mm->buffer + mm->location;
-    mm->location += size;
-    if (mm->location % sizeof(void*) != 0) {
-        u64 alignedLocation = mm->location + (sizeof(void*) - (mm->location % sizeof(void*)));
-        mm->location = uimini(alignedLocation, mm->size);
+    void* reserve = (byte*)mp->buffer + mp->location;
+    mp->location += size;
+    if (mp->location % sizeof(void*) != 0) {
+        u64 alignedLocation = mp->location + (sizeof(void*) - (mp->location % sizeof(void*)));
+        mp->location = uimini(alignedLocation, mp->size);
     }
     return reserve;
 }
-void MemoryPoolClear(MemoryPool* mm) {
-    assert(mm->size > 0);
-    memset(mm->buffer, 0, mm->location);
-    mm->location = 0;
+void MemoryPoolClear(MemoryPool* mp) {
+    assert(mp->size > 0);
+    memset(mp->buffer, 0, mp->location);
+    mp->location = 0;
 }
 template <typename T>
-T* MemoryReserve(MemoryPool* mm) {
-    return (T*)MemoryPoolReserve(mm, sizeof(T));
+T* MemoryReserve(MemoryPool* mp) {
+    return (T*)MemoryPoolReserve(mp, sizeof(T));
 }
 template <typename T>
-T* MemoryReserve(MemoryPool* mm, u64 size) {
-    return (T*)MemoryPoolReserve(mm, sizeof(T) * size);
+T* MemoryReserve(MemoryPool* mp, u64 size) {
+    return (T*)MemoryPoolReserve(mp, sizeof(T) * size);
 }
 
 void InputInit(Input* input) {
@@ -1597,6 +1642,26 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
     return ci;
 }
 
+VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp, i32 size) {
+    VariableDynamicBuffer vdb = {};
+    vdb.memoryPool = MemoryPoolCreateInsideMemoryPool(mp, 32);
+    vdb.locations = TypeListCreate(MD_TYPE_I32, mp, 5);
+    vdb.types = TypeListCreate(MD_TYPE_I32, mp, 5);
+    vdb.variableCount = 0;
+    return vdb;
+}
+i32 VariableDynamicBufferGetTypeSize(i32 type) {
+    switch (type) {
+        
+        default:
+            assert(false);
+            return -1;
+    }
+}
+void VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type) {
+    
+}
+
 // TODO: Rename because the memory pool parameter causes confusion
 GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp) {
     GameObjectDefinition def = {};
@@ -1644,8 +1709,8 @@ String* StringListGet(StringList* list, i32 ind) {
 EventHandler EventHandlerCreate() {
     EventHandler eh = {};
     for (i32 i = 0; i < EVENT_COUNT; i++) {
-        eh.callbacks[i] = TypeListCreate(TYPE_LIST_PTR, &mdEngine::persistentMemory);
-        eh.registrars[i] = TypeListCreate(TYPE_LIST_PTR, &mdEngine::persistentMemory);
+        eh.callbacks[i] = TypeListCreate(MD_TYPE_PTR, &mdEngine::persistentMemory);
+        eh.registrars[i] = TypeListCreate(MD_TYPE_PTR, &mdEngine::persistentMemory);
     }
     return eh;
 }
@@ -1684,7 +1749,7 @@ TypeList* TypeListCreate(i32 typeIndex, MemoryPool* mp, i32 capacity) {
     TypeList* list = MemoryReserve<TypeList>(mp);
     list->memoryProvider = mp;
     list->typeIndex = typeIndex;
-    list->bufferStride = TypeListTypeGetSize(typeIndex);
+    list->bufferStride = MdTypeGetSize(typeIndex);
     list->size = 0;
     list->capacity = 0;
     TypeListSetCapacity(list, capacity);
@@ -1717,19 +1782,6 @@ void TypeListSetCapacity(TypeList* list, i32 capacity) {
         }
     }
 }
-i32 TypeListTypeGetSize(i32 typeIndex) {
-    switch (typeIndex) {
-        case TYPE_LIST_I32:
-            return sizeof(i32);
-        case TYPE_LIST_PTR:
-            return sizeof(char*);
-        case TYPE_LIST_GAME_OBJECT_DEFINITION:
-            return sizeof(GameObjectDefinition);
-        default:
-            assert(false);
-            return -1;
-    }
-}
 void TypeListGrowCapacityIfLimitReached(TypeList* list) {
     if (list->capacity == list->size) {
         if (list->capacity == 0) {
@@ -1748,23 +1800,23 @@ void TypeListResize(TypeList* list, i32 size) {
     list->size = size;
 }
 void TypeListPushBackI32(TypeList* list, i32 val) {
-    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(list->typeIndex == MD_TYPE_I32);
     TypeListGrowCapacityIfLimitReached(list);
     ((i32*)list->buffer)[list->size] = val;
     list->size++;
 }
 i32 TypeListGetI32(TypeList* list, i32 ind) {
-    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(list->typeIndex == MD_TYPE_I32);
     assert(ind < list->size);
     return ((i32*)list->buffer)[ind];
 }
 void TypeListSetI32(TypeList* list, i32 ind, i32 val) {
-    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(list->typeIndex == MD_TYPE_I32);
     assert(ind < list->size);
     ((i32*)list->buffer)[ind] = val;
 }
 i32 TypeListFindI32(TypeList* list, i32 val) {
-    assert(list->typeIndex == TYPE_LIST_I32);
+    assert(list->typeIndex == MD_TYPE_I32);
     i32* buffer = (i32*)list->buffer;
     for (i32 i = 0; i < list->size; i++) {
         if (buffer[i] == val) {
@@ -1774,21 +1826,21 @@ i32 TypeListFindI32(TypeList* list, i32 val) {
     return -1;
 }
 void TypeListPushBackPtr(TypeList* list, void* val) {
-    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(list->typeIndex == MD_TYPE_PTR);
     _TypeListPushBackPtr(list, val);
 }
 void* TypeListGetPtr(TypeList* list, i32 ind) {
-    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(list->typeIndex == MD_TYPE_PTR);
     assert(ind < list->size);
     return _TypeListGetPtr(list, ind);
 }
 void TypeListSetPtr(TypeList* list, i32 ind, void* val) {
-    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(list->typeIndex == MD_TYPE_PTR);
     assert(ind < list->size);
     _TypeListSetPtr(list, ind, val);
 }
 i32 TypeListFindPtr(TypeList* list, void* val) {
-    assert(list->typeIndex == TYPE_LIST_PTR);
+    assert(list->typeIndex == MD_TYPE_PTR);
     return _TypeListFindPtr(list, val);
 }
 void _TypeListPushBackPtr(TypeList* list, void* val) {
@@ -1812,23 +1864,23 @@ i32 _TypeListFindPtr(TypeList* list, void* val) {
     return -1;
 }
 void TypeListPushBackGameObjectDefinition(TypeList* list, GameObjectDefinition val) {
-    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(list->typeIndex == MD_TYPE_GAME_OBJECT_DEFINITION);
     TypeListGrowCapacityIfLimitReached(list);
     ((GameObjectDefinition*)list->buffer)[list->size] = val;
     list->size++;
 }
 GameObjectDefinition* TypeListGetGameObjectDefinition(TypeList* list, i32 ind) {
-    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(list->typeIndex == MD_TYPE_GAME_OBJECT_DEFINITION);
     assert(ind < list->size);
     return &((GameObjectDefinition*)list->buffer)[ind];
 }
 void TypeListSetGameObjectDefinition(TypeList* list, i32 ind, GameObjectDefinition val) {
-    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(list->typeIndex == MD_TYPE_GAME_OBJECT_DEFINITION);
     assert(ind < list->size);
     ((GameObjectDefinition*)list->buffer)[ind] = val;
 }
 i32 TypeListFindGameObjectDefinitionShallow(TypeList* list, GameObjectDefinition* val) {
-    assert(list->typeIndex == TYPE_LIST_GAME_OBJECT_DEFINITION);
+    assert(list->typeIndex == MD_TYPE_GAME_OBJECT_DEFINITION);
     GameObjectDefinition* buffer = (GameObjectDefinition*)list->buffer;
     for (i32 i = 0; i < list->size; i++) {
         if (buffer + i == val) {
@@ -2013,7 +2065,7 @@ void DialogueOptionsDraw(void* _dopt) {
 void* DialogueSequenceCreate(MemoryPool* mp) {
     DialogueSequence* dseq = MemoryReserve<DialogueSequence>(mp);
     dseq->sectionIndex = 0;
-    dseq->sections = TypeListCreate(TYPE_LIST_PTR, &mdEngine::sceneMemory, 50);
+    dseq->sections = TypeListCreate(MD_TYPE_PTR, &mdEngine::sceneMemory, 50);
     TypewriterInit(&dseq->typewriter);
     dseq->typewriter.autoAdvance = true;
     dseq->typewriter.autoHide = false;
@@ -2087,7 +2139,7 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     StringListInit(dss->text, textCount, &mdEngine::sceneMemory);
     dss->options = MemoryReserve<StringList>(&mdEngine::sceneMemory);
     StringListInit(dss->options, optionCount, &mdEngine::sceneMemory);
-    dss->link = TypeListCreate(TYPE_LIST_PTR, &mdEngine::sceneMemory);
+    dss->link = TypeListCreate(MD_TYPE_PTR, &mdEngine::sceneMemory);
     return dss;
 }
 

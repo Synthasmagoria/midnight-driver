@@ -289,7 +289,7 @@ void MdGameObjectAdd(GameObject* gameObjects, i32* gameObjectCount, GameObject o
 
 void MdDebugInit() {
     debug::instanceableObjectIndices = TypeListCreate(
-        TYPE_LIST_I32,
+        MD_TYPE_I32,
         &mdEngine::engineMemory,
         _MD_GAME_ENGINE_OBJECT_COUNT_MAX);
     {

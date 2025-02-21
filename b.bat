@@ -1,3 +1,5 @@
 @echo off
 del /s /q build\debug\*
-cl -Fobuild/debug/ -W4 -EHa -Oi -wd4100 -nologo -GR- -Febuild/debug/ -Z7 -Iinclude main.cpp raylib.lib rlImGui.lib opengl32.lib kernel32.lib user32.lib gdi32.lib winmm.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib -link -LIBPATH:lib
+set CleanupWarningDisablers=-wd4100 -wd4189 -wd4702 -wd4065
+set RaylibDependencies=opengl32.lib kernel32.lib user32.lib gdi32.lib winmm.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib
+cl -Fobuild/debug/ -Febuild/debug/ -Iinclude -W4 -EHa -Oi -nologo -GR- -Z7 %CleanupWarningDisablers% main.cpp raylib.lib rlImGui.lib %RaylibDependencies% -link -LIBPATH:lib
