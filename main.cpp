@@ -1,4 +1,3 @@
-#include <cstring>
 #define NO_FONT_AWESOME
 
 #include "raylib/raylib.h"
@@ -14,6 +13,7 @@
 
 #include "typedefs.hpp"
 #include "engine.hpp"
+#include "shadinclude.hpp"
 
 /*
     Game objects
@@ -113,9 +113,9 @@ namespace resources {
         SHADER_COUNT
     };
     const char *shaderPaths[SHADER_COUNT * 2] = {
-        "unlitInstanced.vs", "passthrough.fs",
+        "unlitInstanced.vs", "unlitInstanced.fs",
         "light.vs", "light.fs",
-        "lightInstanced.vs", "light.fs",
+        "lightInstanced.vs", "lightInstanced.fs",
         "lightTerrain.vs", "lightTerrain.fs",
         "skybox.vs", "skybox.fs",
         "passthrough2d.vs", "passthrough2d.fs",
@@ -153,7 +153,7 @@ namespace resources {
         "taxi.glb",
         "tree.glb",
         "level0.glb",
-        "level1_road.glb"
+        "level1_haircut.glb"
     };
     Model models[MODEL_DEFAULT_COUNT + MODEL_COUNT];
 
@@ -720,6 +720,11 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
             TextFormat("Global memory: %ub / %ub",
             &mdEngine::persistentMemory.location,
             &mdEngine::persistentMemory.size));
+        // TODO: Make sure this works
+        //if (ImGui::Button("Reload shaders")) {
+        //    UnloadGameShaders();
+        //    LoadGameShaders();
+        //}
     }
     if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Combo("Objects", &debug::instanceableObjectSelection, debug::instanceableObjectNames);

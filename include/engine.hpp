@@ -28,6 +28,8 @@
 #define KILOBYTES(bytes)(bytes * 1000)
 #define MEGABYTES(bytes)(bytes * 1000000)
 #define GIGABYTES(bytes)(bytes * 1000000000)
+#define global_variable static // when used in global scope
+#define local_persist static // when used inside a function
 
 #define LOAD_MODEL(path)(LoadModel(TextFormat("resources/models/%s", path)))
 #define LOAD_SHADER(v,f)(LoadShader(TextFormat("resources/shaders/%s", v), TextFormat("resources/shaders/%s", f)))
