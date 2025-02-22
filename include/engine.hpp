@@ -525,6 +525,7 @@ inline void DrawCrosshair(i32 x, i32 y, Color col) {
     Engine (raylib dependency only)
 */
 // TODO: Decouple memory allocation calls.
+// TODO: Add functionality to extend the top memory location of the buffer when the same thing is requesting more memory
 struct MemoryPool {
     void* buffer;
     u64 location;
@@ -684,39 +685,35 @@ struct VariableDynamicBuffer {
     TypeList* types;
     TypeList* locations;
     MemoryPool memoryPool;
+    static constexpr i32 BUFFER_SIZE = 32; // TODO: Make buffer size not hardcoded
 };
-struct VariableDynamicBufferEntryInfo {
-    i32 type;
-    i32 location;
-};
-VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp, i32 size);
+VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp);
 // TODO: Unify this with the TypeList types
-void VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type);
+i32 VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type);
+void* VariableDynamicBufferGet(VariableDynamicBuffer* vdb, i32 index, i32 type);
+void VariableDynamicBufferSet(VariableDynamicBuffer* vdb, i32 index, i32 type, void* value);
 
 typedef void*(*GameInstanceCreateFunctionSignature)(MemoryPool*);
 struct GameObjectDefinition {
     GameInstanceCreateFunctionSignature Create;
-    void (*Update) (void*);
-    void (*Draw3d) (void*);
-    void (*DrawUi) (void*);
-    void (*Free) (void*);
-    void (*DrawImGui) (void*);
+    void (*Update) (void* data);
+    void (*Draw3d) (void* data);
+    void (*DrawUi) (void* data);
+    void (*Free) (void* data);
+    void (*DrawImGui) (void* data);
     const char* objectName;
 };
-struct GameObjectInstanceVariable {
-    void* value;
-    i32 type;
-};
 GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp);
+typedef void (*GameObjectScriptFunc)(GameObject* obj, void* data);
 struct GameObject {
-    void (*Update) (void*);
-    void (*UpdateScript) (void*);
-    void (*Draw3d) (void*);
-    void (*DrawUi) (void*);
-    void (*Free) (void*);
-    void (*DrawImGui) (void*);
-    std::unordered_map<std::string, GameObjectInstanceVariable*> variables;
-    void* variableData;
+    void (*Update) (void* data);
+    void (*Draw3d) (void* data);
+    void (*DrawUi) (void* data);
+    void (*Free) (void* data);
+    void (*DrawImGui) (void* data);
+    GameObjectScriptFunc UpdateScript;
+    std::unordered_map<std::string, i32> variableIndices;
+    VariableDynamicBuffer variableBuffer;
     void* data;
     const char* objectName;
     const char* instanceName;
@@ -726,7 +723,11 @@ struct GameObject {
     bool active;
 };
 i32 GameObject::idCounter = 100000;
-GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName = "<unnamed>");
+GameObject GameObjectCreate(void* data, MemoryPool* mp, const char* objectName, const char* instanceName = "<unnamed>");
+void GameObjectVariablePush(GameObject* obj, std::string name, i32 type, void* value);
+void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type);
+void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* value);
+void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript);
 
 struct StringList {
     String* data;
@@ -763,6 +764,7 @@ void EventHandlerRegisterEvent(i32 ind, void* registrar, EventCallbackSignature 
 void EventHandlerUnregisterEvent(i32 ind, void* registrar);
 void EventHandlerCallEvent(void* caller, i32 ind, void* args);
 
+// TODO: Support U64
 struct TypeList {
     void* buffer;
     MemoryPool* memoryProvider;
@@ -1161,22 +1163,16 @@ void MdEngineInit(u64 scratchMemorySize, u64 sceneMemorySize, u64 persistentMemo
     InputInit(&mdEngine::input);
 }
 
+// TODO: Consider removing this or GameObjectCreate and just have one function for this
 GameObject MdEngineInstanceGameObject(i32 ind, MemoryPool* mp, const char* instanceName = "") {
     assert(mdEngine::gameObjectIsDefined[ind]);
-    GameObject go = {};
     GameObjectDefinition def = mdEngine::gameObjectDefinitions[ind];
-    go.objectName = def.objectName;
-    go.instanceName = CstringDuplicate(instanceName, mp);
-    go.active = true;
-    go.visible = true;
-    go.data = def.Create(mp);
+    GameObject go = GameObjectCreate(def.Create(mp), mp, def.objectName, instanceName);
     go.Draw3d = def.Draw3d;
     go.DrawUi = def.DrawUi;
     go.DrawImGui = def.DrawImGui;
     go.Free = def.Free;
     go.Update = def.Update;
-    go.id = GameObject::idCounter;
-    GameObject::idCounter++;
     return go;
 }
 
@@ -1642,24 +1638,45 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
     return ci;
 }
 
-VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp, i32 size) {
+VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp) {
     VariableDynamicBuffer vdb = {};
-    vdb.memoryPool = MemoryPoolCreateInsideMemoryPool(mp, 32);
+    vdb.memoryPool = MemoryPoolCreateInsideMemoryPool(mp, VariableDynamicBuffer::BUFFER_SIZE);
     vdb.locations = TypeListCreate(MD_TYPE_I32, mp, 5);
     vdb.types = TypeListCreate(MD_TYPE_I32, mp, 5);
     vdb.variableCount = 0;
     return vdb;
 }
-i32 VariableDynamicBufferGetTypeSize(i32 type) {
-    switch (type) {
-        
-        default:
-            assert(false);
-            return -1;
-    }
+i32 VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type) {
+    i32 typeSize = MdTypeGetSize(type);
+    u64 location = vdb->memoryPool.location;
+    void* valueDest = MemoryPoolReserve(&vdb->memoryPool, typeSize);
+    TypeListPushBackI32(vdb->types, type);
+    TypeListPushBackI32(vdb->locations, location);
+    memcpy(valueDest, value, typeSize);
+    i32 index = vdb->variableCount;
+    vdb->variableCount++;
+    return index;
 }
-void VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type) {
-    
+void* VariableDynamicBufferGet(VariableDynamicBuffer* vdb, i32 index, i32 type) {
+    i32 variableType = TypeListGetI32(vdb->types, index);
+    if (variableType != type) {
+        assert(false);
+        TraceLog(LOG_ERROR, TextFormat("%s: Variable types of index didn't match", nameof(VariableDynamicBufferGet)));
+        return nullptr;
+    }
+    i32 variableLocation = TypeListGetI32(vdb->locations, index);
+    return (byte*)vdb->memoryPool.buffer + variableLocation;
+}
+void VariableDynamicBufferSet(VariableDynamicBuffer* vdb, i32 index, i32 type, void* value) {
+    i32 variableType = TypeListGetI32(vdb->types, index);
+    if (variableType != type) {
+        assert(false);
+        TraceLog(LOG_ERROR, TextFormat("%s: Variable types of index didn't match", nameof(VariableDynamicBufferGet)));
+        return;
+    }
+    i32 variableLocation = TypeListGetI32(vdb->locations, index);
+    void* variablePtr = (byte*)vdb->memoryPool.buffer + variableLocation;
+    memcpy(variablePtr, value, MdTypeGetSize(type));
 }
 
 // TODO: Rename because the memory pool parameter causes confusion
@@ -1669,14 +1686,62 @@ GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInst
     def.objectName = CstringDuplicate(objectName, mp);
     return def;
 }
-GameObject GameObjectCreate(void* data, const char* objectName, const char* instanceName) {
+GameObject GameObjectCreate(void* data, MemoryPool* mp, const char* objectName, const char* instanceName) {
     GameObject go = {};
+    go.variableBuffer = VariableDynamicBufferCreate(mp);
+    go.variableIndices = std::unordered_map<std::string, i32>();
     go.data = data;
-    go.objectName = CstringDuplicate(objectName, &mdEngine::sceneMemory);
-    go.instanceName = CstringDuplicate(instanceName, &mdEngine::sceneMemory);
+    go.active = true;
+    go.visible = true;
+    go.objectName = CstringDuplicate(objectName, mp);
+    go.instanceName = CstringDuplicate(instanceName, mp);
     go.id = GameObject::idCounter;
     GameObject::idCounter++;
     return go;
+}
+void GameObjectVariablePush(GameObject* obj, std::string name, i32 type, void* value) {
+    if (obj->variableIndices.find(name) != obj->variableIndices.end()) {
+        const char* log = TextFormat(
+            "%s: Variable with name '%s' already exists in object '%s'",
+            nameof(GameObjectVariablePush),
+            name.c_str(),
+            obj->objectName);
+        TraceLog(LOG_WARNING, log);
+        return;
+    }
+    obj->variableIndices[name] = VariableDynamicBufferPush(&obj->variableBuffer, value, type);
+}
+void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type) {
+    if (obj->variableIndices.find(name) == obj->variableIndices.end()) {
+        const char* log = TextFormat(
+            "%s: Variable with name '%s' doesn't exists in object '%s'",
+            nameof(GameObjectVariableGet),
+            name.c_str(),
+            obj->objectName);
+        TraceLog(LOG_WARNING, log);
+        return nullptr;
+    }
+    return VariableDynamicBufferGet(
+        &obj->variableBuffer,
+        obj->variableIndices[name],
+        type);
+}
+void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* value) {
+    if (obj->variableIndices.find(name) == obj->variableIndices.end()) {
+        const char* log = TextFormat(
+            "%s: Variable with name '%s' doesn't exists in object '%s'",
+            nameof(GameObjectVariableGet),
+            name.c_str(),
+            obj->objectName);
+        TraceLog(LOG_WARNING, log);
+        return;
+    }
+    VariableDynamicBufferSet(&obj->variableBuffer, obj->variableIndices[name], type, value);
+}
+void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript) {
+    // TODO: Change variable dynamic buffer initialization to happen here
+    initScript(obj, &obj->data);
+    obj->UpdateScript = updateScript;
 }
 
 void StringListInit(StringList* list, i32 size, MemoryPool* mp) {

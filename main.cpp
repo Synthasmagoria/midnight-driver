@@ -258,6 +258,7 @@ namespace global {
     const i32 screenHeight = 800;
     // TODO: Turn this into an array of sorts
     constexpr i32 GAME_OBJECT_MAX = 1000;
+    // TODO: Move this to scene memory for cache efficiency
     GameObject gameObjects[GAME_OBJECT_MAX];
     i32 gameObjectCount;
     struct {
@@ -493,6 +494,22 @@ void SceneSetup01(GameObject* go, i32* count) {
     MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAB, mp));
     MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, &mdEngine::sceneMemory));
 };
+
+void ScenePriestReachout_TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
+    i32 timeValue = 0;
+    GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
+}
+void ScenePriestReachout_TextureInstanceMoon_ScriptUpdate(GameObject* obj, void* data) {
+    i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
+    time++;
+    TextureInstance* ti = (TextureInstance*)data;
+    SetShaderValue(
+        *ti->shader,
+        GetShaderLocation(*ti->shader, "time"),
+        &time,
+        SHADER_UNIFORM_INT);
+    GameObjectVariableSet(obj, "time", MD_TYPE_I32, &time);
+}
 void SceneSetup_PriestReachout(GameObject* go, i32* count) {
     MemoryPool* mp = &mdEngine::sceneMemory;
     {
@@ -501,6 +518,10 @@ void SceneSetup_PriestReachout(GameObject* go, i32* count) {
         ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
         TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
         TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+        GameObjectAddScript(
+            &obj,
+            ScenePriestReachout_TextureInstanceMoon_ScriptInit,
+            ScenePriestReachout_TextureInstanceMoon_ScriptUpdate);
         MdGameObjectAdd(go, count, obj);
     }
     {
@@ -836,6 +857,9 @@ void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
         if (gameObjects[i].Update != nullptr) {
             gameObjects[i].Update(gameObjects[i].data);
+        }
+        if (gameObjects[i].UpdateScript != nullptr) {
+            gameObjects[i].UpdateScript(&gameObjects[i], gameObjects[i].data);
         }
     }
 }
