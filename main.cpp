@@ -379,6 +379,7 @@ void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
+// TODO: Make game code reloadable
 namespace scenes {
 namespace priest_reachout {
     void DialogueSequence_InitDemo(DialogueSequence* dseq, MemoryPool* mp) {
@@ -497,19 +498,47 @@ namespace priest_reachout {
     }
 
     void TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
+        TextureInstance* ti = (TextureInstance*)obj->data;
+
         i32 timeValue = 0;
         GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
+
+        i32 tweenFadeStartValue = 0;
+        GameObjectVariablePush(obj, "fadeTweenValueStart", MD_TYPE_BYTE, &tweenFadeStartValue);
+
+        i32 tweenFadeEndValue = 255;
+        GameObjectVariablePush(obj, "fadeTweenValueEnd", MD_TYPE_BYTE, &tweenFadeEndValue);
+
+        Tween t = TweenCreate(
+            &(ti->tint.a),
+            GameObjectVariableGet(obj, "fadeTweenValueStart", MD_TYPE_BYTE),
+            GameObjectVariableGet(obj, "fadeTweenValueEnd", MD_TYPE_BYTE),
+            MD_TYPE_BYTE,
+            2.f);
+        TweenStart(&t);
+        GameObjectVariablePush(obj, "fadeTween", MD_TYPE_TWEEN, &t);
     }
     void TextureInstanceMoon_ScriptUpdate(GameObject* obj, void* data) {
+        TextureInstance* ti = (TextureInstance*)obj->data;
+
         i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
         time++;
-        TextureInstance* ti = (TextureInstance*)data;
         SetShaderValue(
             *ti->shader,
             GetShaderLocation(*ti->shader, "time"),
             &time,
             SHADER_UNIFORM_INT);
         GameObjectVariableSet(obj, "time", MD_TYPE_I32, &time);
+        ShaderColor colorDiffuse = ColorToShaderColor(ti->tint);
+        // TODO: Figure out why I have to pass color manually instead of tint just working
+        SetShaderValue(
+            *ti->shader,
+            GetShaderLocation(*ti->shader, "color"),
+            &colorDiffuse,
+            SHADER_UNIFORM_VEC4);
+        
+        Tween* t = (Tween*)GameObjectVariableGet(obj, "fadeTween", MD_TYPE_TWEEN);
+        TweenStep(t);
     }
     void Scene(GameObject* go, i32* count) {
         MemoryPool* mp = &mdEngine::sceneMemory;
@@ -526,6 +555,15 @@ namespace priest_reachout {
         }
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            GameObjectAddScript(&obj,TextureInstanceMoon_ScriptInit,TextureInstanceMoon_ScriptUpdate);
             MdGameObjectAdd(go, count, obj);
         }
         {

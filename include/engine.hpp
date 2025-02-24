@@ -530,9 +530,11 @@ struct MemoryPool {
     void* buffer;
     u64 location;
     u64 size;
+    u64 alignment;
 };
 MemoryPool MemoryPoolCreate(u64 size);
 MemoryPool MemoryPoolCreateInsideMemoryPool(MemoryPool* srcMp, u64 size);
+void MemoryPoolExpand(MemoryPool* mp);
 void MemoryPoolDestroy(MemoryPool* mp);
 void* MemoryPoolReserve(MemoryPool* mp, u64 size);
 void MemoryPoolClear(MemoryPool* mp);
@@ -659,6 +661,7 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point);
 /*
     Engine (Dependency depth 1)
 */
+struct Tween;
 struct VariableDynamicBuffer;
 struct GameObjectDefinition;
 struct GameObject;
@@ -671,13 +674,28 @@ struct DialogueOptions;
 struct Heightmap;
 struct InstanceRenderer;
 
+// TODO: Consider using generics for this
+struct Tween {
+    void* data;
+    void* start;
+    void* end;
+    i32 dataType;
+    float duration;
+    float _time;
+    bool _started;
+};
+Tween TweenCreate(void* variable, void* start, void* end, i32 dataType, float duration);
+void TweenStart(Tween* t);
+void TweenStep(Tween* t);
+void _TweenEnd(Tween* t);
+
 // TODO: Consider creating a list that returns variable dynamic buffer entries rather than having 3 separate lists
 struct VariableDynamicBuffer {
     i32 variableCount;
     TypeList* types;
     TypeList* locations;
     MemoryPool memoryPool;
-    static constexpr i32 BUFFER_SIZE = 32; // TODO: Make buffer size not hardcoded
+    static constexpr i32 BUFFER_SIZE = 64; // TODO: Make buffer size not hardcoded
 };
 VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp);
 // TODO: Unify this with the TypeList types
@@ -958,7 +976,10 @@ const char* CstringDuplicate(const char* cstr, MemoryPool* mm);
 
 enum MD_TYPES {
     MD_TYPE_I32,
+    MD_TYPE_BYTE,
     MD_TYPE_PTR,
+    MD_TYPE_FLOAT,
+    MD_TYPE_TWEEN,
     MD_TYPE_GAME_OBJECT_DEFINITION,
     MD_TYPE_COUNT
 };
@@ -966,8 +987,14 @@ i32 MdTypeGetSize(i32 type) {
     switch (type) {
         case MD_TYPE_I32:
             return sizeof(i32);
+        case MD_TYPE_BYTE:
+            return sizeof(byte);
         case MD_TYPE_PTR:
             return sizeof(void*);
+        case MD_TYPE_FLOAT:
+            return sizeof(float);
+        case MD_TYPE_TWEEN:
+            return sizeof(Tween);
         case MD_TYPE_GAME_OBJECT_DEFINITION:
             return sizeof(GameObjectDefinition);
         default:
@@ -1201,6 +1228,7 @@ MemoryPool MemoryPoolCreate(u64 size) {
     mp.buffer = calloc(size, sizeof(byte));
     mp.location = 0;
     mp.size = size;
+    mp.alignment = sizeof(void*);
     return mp;
 }
 MemoryPool MemoryPoolCreateInsideMemoryPool(MemoryPool* srcMp, u64 size) {
@@ -1209,6 +1237,16 @@ MemoryPool MemoryPoolCreateInsideMemoryPool(MemoryPool* srcMp, u64 size) {
     mp.location = 0;
     mp.size = size;
     return mp;
+}
+void MemoryPoolExpand(MemoryPool* mp) {
+    // TODO: Implement
+    /*
+        Cases in which its allowed to expand memory
+        1. request to expand comes from front of memory pool
+        2. request to expand comes from foremost nested memory pool
+        This would help all the memory usages to be checked at the beginning of the game
+    */
+    assert(false);
 }
 void MemoryPoolDestroy(MemoryPool* mp) {
     if (mp->buffer != nullptr) {
@@ -1220,7 +1258,7 @@ void* MemoryPoolReserve(MemoryPool* mp, u64 size) {
     assert(size > 0);
     void* reserve = (byte*)mp->buffer + mp->location;
     mp->location += size;
-    if (mp->location % sizeof(void*) != 0) {
+    if (mp->alignment != 0 && mp->location % mp->alignment != 0) {
         u64 alignedLocation = mp->location + (sizeof(void*) - (mp->location % sizeof(void*)));
         mp->location = uimini(alignedLocation, mp->size);
     }
@@ -1644,9 +1682,77 @@ CollisionInformation ColliderPointCollision(Collider* collider, v2 point) {
     return ci;
 }
 
+Tween TweenCreate(void* variable, void* start, void* end, i32 dataType, float duration) {
+    Tween t = {};
+    switch (dataType) {
+        case MD_TYPE_FLOAT:
+        case MD_TYPE_BYTE:
+            break;
+        default:
+            assert(false);
+            TraceLog(LOG_WARNING, TextFormat("%s: Data type '%i' not supported", nameof(TweenCreate), dataType));
+            t.data = nullptr;
+            t.start = nullptr;
+            t.end = nullptr;
+            t.dataType = -1;
+            t.duration = -1;
+            t._time = 0;
+            return t;
+    }
+    t.data = variable;
+    t.start = start;
+    t.end = end;
+    t.dataType = dataType;
+    t.duration = duration;
+    t._time = 0;
+    return t;
+}
+void TweenStart(Tween* t) {
+    if (t->duration <= 0.f) {
+        _TweenEnd(t);
+        return;
+    }
+    t->_time = 0;
+    t->_started = true;
+}
+void TweenStep(Tween* t) {
+    if (!t->_started) {
+        return;
+    }
+    t->_time = fminf(t->_time + FRAME_TIME, t->duration);
+    float progress = t->_time / t->duration;
+    if (progress == 1.f) {
+        _TweenEnd(t);
+        return;
+    }
+    switch (t->dataType) {
+        case MD_TYPE_FLOAT:
+        {
+            float start = *(float*)t->start;
+            float end = *(float*)t->end;
+            *(float*)t->data = (end - start) * progress + start;
+            break;
+        }
+        case MD_TYPE_BYTE:
+        {
+            byte start = *(byte*)t->start;
+            byte end = *(byte*)t->end;
+            byte value = (byte)((float)(end - start) * progress) + start;
+            memcpy(t->data, &value, MdTypeGetSize(MD_TYPE_BYTE));
+            break;
+        }
+    }
+}
+void _TweenEnd(Tween* t) {
+    t->_time = 1.f;
+    t->_started = false;
+    memcpy(t->data, t->end, MdTypeGetSize(t->dataType));
+}
+
 VariableDynamicBuffer VariableDynamicBufferCreate(MemoryPool* mp) {
     VariableDynamicBuffer vdb = {};
     vdb.memoryPool = MemoryPoolCreateInsideMemoryPool(mp, VariableDynamicBuffer::BUFFER_SIZE);
+    vdb.memoryPool.alignment = 0;
     vdb.locations = TypeListCreate(MD_TYPE_I32, mp, 5);
     vdb.types = TypeListCreate(MD_TYPE_I32, mp, 5);
     vdb.variableCount = 0;
@@ -2366,7 +2472,7 @@ void TextureInstanceSetPosition(TextureInstance* ti, v2 position) {
 void TextureInstanceDrawUi(void* _ti) {
     TextureInstance* ti = (TextureInstance*)_ti;
     BeginShaderMode(*ti->shader);
-    DrawTexturePro(*ti->_texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->_rotation, ti->tint);
+    DrawTexturePro(*ti->_texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->_rotation, {255, 255, 255, 128});//ti->tint);
     EndShaderMode();
 }
 
