@@ -547,15 +547,6 @@ struct TextDrawingStyle {
     float size;
     float charSpacing;
 };
-inline TextDrawingStyle TextDrawingStyleGetDefault() {
-    TextDrawingStyle tds = {};
-    tds.charSpacing = 1;
-    tds.font = {};
-    tds.size = 24;
-    tds.color = WHITE;
-    return tds;
-}
-
 enum INPUT {
     INPUT_ACCELERATE,
     INPUT_BREAK,
@@ -576,6 +567,7 @@ enum INPUT {
 #define INPUT_SELECT INPUT_ACCELERATE
 
 // TODO: Keybindings probably shouldn't be part of the engine code
+// TODO: A system for consuming input so that it doesn't propagate to things that are not supposed to have them
 struct Input {
     i32 map[INPUT_COUNT];
     bool pressed[INPUT_COUNT];
@@ -882,10 +874,14 @@ struct DialogueSequence {
     i32 sectionIndex;
 };
 void* DialogueSequenceCreate(MemoryPool* mp);
-void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 void DialogueSequenceUpdate(void* _dseq);
 void DialogueSequenceDrawUi(void* _dseq);
-void DialogueSequenceStartSection(i32 ind);
+enum DIALOGUE_SEQUENCE_LAYOUT {
+    DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER,
+    DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER_BOXLESS,
+    DIALOGUE_SEQUENCE_LAYOUT_COUNT
+};
+void DialogueSequenceSetLayout(DialogueSequence* dseq, i32 layout);
 void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
 void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
 struct DialogueSequenceSection {
@@ -893,8 +889,9 @@ struct DialogueSequenceSection {
     StringList* options;
     TypeList* link;
 };
+void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind);
 DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind);
-DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount);
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp);
 
 struct ModelInstance {
     Model model;
@@ -988,6 +985,7 @@ namespace mdEngine {
     EventHandler eventHandler;
     Input input;
     Texture missingTexture;
+    TextDrawingStyle textDrawingStyleDefault;
     std::unordered_map<std::string, void*> groups = std::unordered_map<std::string, void*>();
     GameObjectDefinition gameObjectDefinitions[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
     bool gameObjectIsDefined[_MD_GAME_ENGINE_OBJECT_COUNT_MAX];
@@ -1157,6 +1155,14 @@ void MdEngineInit(u64 scratchMemorySize, u64 sceneMemorySize, u64 persistentMemo
     mdEngine::engineMemory = MemoryPoolCreate(engineMemorySize);
     mdEngine::eventHandler = EventHandlerCreate();
     mdEngine::passthroughShader = MdEngineLoadPassthroughShader();
+    {
+        TextDrawingStyle tds;
+        tds.color = WHITE;
+        tds.font = {};
+        tds.size = 24;
+        tds.charSpacing = 1;
+        mdEngine::textDrawingStyleDefault = tds;
+    }
     // TODO: Generate this instead of loading it from disk
     mdEngine::missingTexture = LOAD_TEXTURE("missing_texture.png");
     MdEngineRegisterObjects();
@@ -1748,9 +1754,14 @@ void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameO
 }
 
 void StringListInit(StringList* list, i32 size, MemoryPool* mp) {
-    list->data = MemoryReserve<String>(mp, size);
+    if (size == 0) {
+        list->data = nullptr;
+    } else {
+        list->data = MemoryReserve<String>(mp, size);
+    }
     list->capacity = size;
     list->size = 0;
+    list->_memoryPool = mp;
 }
 void StringListAdd(StringList* list, const char* cstr) {
     if (list->size >= list->capacity) {
@@ -1970,7 +1981,7 @@ void TypewriterInit(Typewriter* tw) {
     tw->_autoAdvanceCountdown = -1.f;
     tw->x = 0;
     tw->y = 0;
-    tw->textDrawingStyle = TextDrawingStyleGetDefault();
+    tw->textDrawingStyle = mdEngine::textDrawingStyleDefault;
 }
 void TypewriterUpdate(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
@@ -2018,10 +2029,6 @@ void _TypewriterReset(Typewriter *tw) {
 // TODO: optimize by only measuring text when the rendered string changes
 void TypewriterDraw(void* _tw) {
     Typewriter* tw = (Typewriter*)_tw;
-    if (!tw->visible || tw->text == nullptr) {
-        return;
-    }
-
     String substr = StringSubstr(tw->text[tw->textIndex], 0, (i32)tw->progress);
     v2 textAlign = MeasureTextEx(
         tw->textDrawingStyle.font,
@@ -2052,7 +2059,7 @@ void DialogueOptionsInit(DialogueOptions* dopt) {
     dopt->visible = false;
     dopt->x = 0;
     dopt->y = 0;
-    dopt->textStyle = TextDrawingStyleGetDefault();
+    dopt->textStyle = mdEngine::textDrawingStyleDefault;
     dopt->npatchInfo = {{0.f, 0.f, 96.f, 96.f}, 32, 32, 32, 32, NPATCH_NINE_PATCH};
     dopt->npatchTexture = {};
     dopt->optionBoxHeightAdd = 32.f;
@@ -2133,48 +2140,12 @@ void DialogueOptionsDraw(void* _dopt) {
 void* DialogueSequenceCreate(MemoryPool* mp) {
     DialogueSequence* dseq = MemoryReserve<DialogueSequence>(mp);
     dseq->sectionIndex = 0;
-    dseq->sections = TypeListCreate(MD_TYPE_PTR, &mdEngine::sceneMemory, 50);
+    dseq->sections = TypeListCreate(MD_TYPE_PTR, mp, 50);
     TypewriterInit(&dseq->typewriter);
     dseq->typewriter.autoAdvance = true;
     dseq->typewriter.autoHide = false;
     DialogueOptionsInit(&dseq->options);
-
-    // TODO: Move this out of the create function. Should be called in some other way
-    switch (0) {
-        case 0:
-        {
-            DialogueSequenceSection* dss = nullptr;
-            StringList* text = nullptr;
-            StringList* opt = nullptr;
-            TypeList* link = nullptr;
-
-            dss = DialogueSequenceSectionCreate(3, 3);
-            text = dss->text;
-            opt = dss->options;
-            link = dss->link;
-            StringListAdd(text, "This is definitely text");
-            StringListAdd(text, "Surely this is pretty close in memory");
-            StringListAdd(text, "Hopefully I won't run out lol");
-            StringListAdd(opt, "You will");
-            StringListAdd(opt, "No");
-            StringListAdd(opt, "Repeat that please");
-            TypeListPushBackI32(link, 1);
-            TypeListPushBackI32(link, -1);
-            TypeListPushBackI32(link, 0);
-            TypeListPushBackPtr(dseq->sections, dss);
-
-            dss = DialogueSequenceSectionCreate(1, 0);
-            text = dss->text;
-            opt = dss->options;
-            link = dss->link;
-            StringListAdd(text, "I'm glad we agree, truly!");
-            TypeListPushBackI32(link, -1);
-            TypeListPushBackPtr(dseq->sections, dss);
-            break;
-        }
-    }
-
-    DialogueSequenceSectionStart(dseq, 0);
+    DialogueSequenceSetLayout(dseq, DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER_BOXLESS);
     EventHandlerRegisterEvent(EVENT_TYPEWRITER_LINE_COMPLETE, dseq, (EventCallbackSignature)DialogueSequenceHandleTypewriter_TextAdvance);
     EventHandlerRegisterEvent(EVENT_DIALOGUE_OPTIONS_SELECTED, dseq, (EventCallbackSignature)DialogueSequenceHandleOptions_Selected);
     return dseq;
@@ -2197,17 +2168,42 @@ void DialogueSequenceDrawUi(void* _dseq) {
     DialogueOptionsDraw(&dseq->options);
     TypewriterDraw(&dseq->typewriter);
 }
+// TODO: Move this out of the engine
+void DialogueSequenceSetLayout(DialogueSequence* dseq, i32 layout) {
+    switch (layout) {
+        case DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER_BOXLESS:
+        dseq->typewriter.x = GetScreenWidth() / 2;
+        dseq->typewriter.y = GetScreenHeight() / 2 - GetScreenHeight() / 3;
+        dseq->options.optionSeparationAdd = 0.f;
+        dseq->options.optionBoxHeightAdd = 0.f;
+        dseq->options.x = GetScreenWidth() / 2;
+        dseq->options.y = GetScreenHeight() / 2 + GetScreenHeight() / 4;
+        break;
 
+        case DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER:
+        dseq->typewriter.x = GetScreenWidth() / 2;
+        dseq->typewriter.y = GetScreenHeight() / 2 - GetScreenHeight() / 3;
+        dseq->options.optionBoxHeightAdd = 32.f;
+        dseq->options.optionSeparationAdd = 48.f;
+        dseq->options.x = GetScreenWidth() / 2;
+        dseq->options.y = GetScreenHeight() / 2 + GetScreenHeight() / 4;
+        break;
+
+        default:
+        TraceLog(LOG_WARNING, TextFormat("%s, No layout with index '%i", nameof(DialogueSequenceSetLayout), layout));
+        break;
+    }
+}
 DialogueSequenceSection* DialogueSequenceSectionGet(DialogueSequence* dseq, i32 ind) {
     return (DialogueSequenceSection*)TypeListGetPtr(dseq->sections, ind);
 }
-DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount) {
-    DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>(&mdEngine::sceneMemory);
-    dss->text = MemoryReserve<StringList>(&mdEngine::sceneMemory);
-    StringListInit(dss->text, textCount, &mdEngine::sceneMemory);
-    dss->options = MemoryReserve<StringList>(&mdEngine::sceneMemory);
-    StringListInit(dss->options, optionCount, &mdEngine::sceneMemory);
-    dss->link = TypeListCreate(MD_TYPE_PTR, &mdEngine::sceneMemory);
+DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 optionCount, MemoryPool* mp) {
+    DialogueSequenceSection* dss = MemoryReserve<DialogueSequenceSection>(mp);
+    dss->text = MemoryReserve<StringList>(mp);
+    StringListInit(dss->text, textCount, mp);
+    dss->options = MemoryReserve<StringList>(mp);
+    StringListInit(dss->options, optionCount, mp);
+    dss->link = TypeListCreate(MD_TYPE_I32, mp);
     return dss;
 }
 

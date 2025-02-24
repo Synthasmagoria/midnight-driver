@@ -283,6 +283,7 @@ namespace debug {
     const char* imguiEditorTexturePaths;
 }
 
+// TODO: Make gameObjectCount and gameObjects part of global state
 void MdGameObjectAdd(GameObject* gameObjects, i32* gameObjectCount, GameObject obj) {
     gameObjects[*gameObjectCount] = obj;
     (*gameObjectCount)++;
@@ -346,7 +347,6 @@ void MdGameRegisterObjects() {
 
 void MdGameInit() {
     MdGameRegisterObjects();
-
     global::currentCameraUi.offset = {0.f, 0.f};
     global::currentCameraUi.rotation = 0.f;
     global::currentCameraUi.target = {0.f, 0.f};
@@ -381,6 +381,121 @@ void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
 namespace scenes {
 namespace priest_reachout {
+    void DialogueSequence_InitDemo(DialogueSequence* dseq, MemoryPool* mp) {
+        DialogueSequenceSection* dss = nullptr;
+        StringList* text = nullptr;
+        StringList* opt = nullptr;
+        TypeList* link = nullptr;
+
+        dss = DialogueSequenceSectionCreate(3, 3, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "This is definitely text");
+        StringListAdd(text, "Surely this is pretty close in memory");
+        StringListAdd(text, "Hopefully I won't run out lol");
+        StringListAdd(opt, "You will");
+        StringListAdd(opt, "No");
+        StringListAdd(opt, "Repeat that please");
+        TypeListPushBackI32(link, 1);
+        TypeListPushBackI32(link, -1);
+        TypeListPushBackI32(link, 0);
+        TypeListPushBackPtr(dseq->sections, dss);
+
+        dss = DialogueSequenceSectionCreate(1, 0, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "I'm glad we agree, truly!");
+        TypeListPushBackI32(link, -1);
+        TypeListPushBackPtr(dseq->sections, dss);
+    }
+
+    void DialogueSequence_InitPriestHandover(DialogueSequence* dseq, MemoryPool* mp) {
+        DialogueSequenceSection* dss = nullptr;
+        StringList* text = nullptr;
+        StringList* opt = nullptr;
+        TypeList* link = nullptr;
+
+        dss = DialogueSequenceSectionCreate(1, 3, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "Thank you; here's your payment.");
+        StringListAdd(opt, "Thank you, father");
+        StringListAdd(opt, "(Silently take the money)");
+        StringListAdd(opt, "I Expected a bit more");
+        TypeListPushBackI32(link, 1);
+        TypeListPushBackI32(link, 1);
+        TypeListPushBackI32(link, 2);
+        TypeListPushBackPtr(dseq->sections, dss); // 0
+
+        dss = DialogueSequenceSectionCreate(2, 3, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "I must say, our drive was insightful...");
+        StringListAdd(text, "If you ever need to confess, don't hesitate to come and visit me.");
+        StringListAdd(opt, "Forget it");
+        StringListAdd(opt, "Maybe I will");
+        StringListAdd(opt, "I'll think about it");
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackPtr(dseq->sections, dss); // 1
+
+        // TODO: "The priest stares blankly at you through the window"
+        dss = DialogueSequenceSectionCreate(3, 3, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "(The priest gives you blank stare)");
+        StringListAdd(text, "I must say, our drive was insightful...");
+        StringListAdd(text, "If you ever need to confess, don't hesitate to come and visit me.");
+        StringListAdd(opt, "Forget it");
+        StringListAdd(opt, "Maybe I will");
+        StringListAdd(opt, "I'll think about it");
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackI32(link, 3);
+        TypeListPushBackPtr(dseq->sections, dss); // 2
+
+        dss = DialogueSequenceSectionCreate(1, 3, mp); 
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "(The priest reaches into his pocket)"); // TODO: Play sound, fade to black
+        StringListAdd(text, "..."); // TODO: Change to illustration
+        StringListAdd(opt, "(Take the cross)"); // TODO: Cross get notification
+        StringListAdd(opt, "...");
+        StringListAdd(opt, "A crucifix?");
+        TypeListPushBackI32(link, 4);
+        TypeListPushBackI32(link, 5);
+        TypeListPushBackI32(link, 5);
+        TypeListPushBackPtr(dseq->sections, dss); // 3
+
+        dss = DialogueSequenceSectionCreate(1, 0, mp); 
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "(Without another word the priest scurries off toward the church)"); // TODO: Back to 3d scene
+        TypeListPushBackPtr(dseq->sections, dss); // 4
+
+        dss = DialogueSequenceSectionCreate(2, 3, mp);
+        text = dss->text;
+        opt = dss->options;
+        link = dss->link;
+        StringListAdd(text, "(The priest drops the cross onto the passenger seat)"); // TODO: Cross get notification
+        StringListAdd(text, "(Without another word the priest scurries off toward the church)"); // TODO: Back to 3d scene
+        StringListAdd(opt, "Hey!");
+        StringListAdd(opt, "What am I supposed to do with this?");
+        StringListAdd(opt, "...");
+        TypeListPushBackI32(link, -1);
+        TypeListPushBackI32(link, -1);
+        TypeListPushBackI32(link, -1);
+        TypeListPushBackPtr(dseq->sections, dss); // 5
+    }
+
     void TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
         i32 timeValue = 0;
         GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
@@ -398,6 +513,29 @@ namespace priest_reachout {
     }
     void Scene(GameObject* go, i32* count) {
         MemoryPool* mp = &mdEngine::sceneMemory;
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_SKYBOX, mp);
+            SkyboxInit((Skybox*)obj.data, &resources::shaders[resources::SHADER_SKYBOX], &resources::images[resources::IMAGE_SKYBOX]);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
+            obj.active = false;
+            Cab* data = (Cab*)obj.data;
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_DIALOGUE_SEQUENCE, mp);
+            DialogueSequence* dseq = (DialogueSequence*)obj.data;
+            DialogueSequence_InitPriestHandover(dseq, mp);
+            DialogueSequenceSectionStart(dseq, 0);
+            MdGameObjectAdd(go, count, obj);
+        }
+        return;
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
             TextureInstance* ti = (TextureInstance*)obj.data;
@@ -515,24 +653,6 @@ namespace priest_reachout {
             mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
             MdGameObjectAdd(go, count, obj);
         }
-        //{
-        //    GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
-        //    Cab* cab = (Cab*)obj.data;
-        //    cab->model = resources::models[resources::MODEL_CAB];
-        //    MdGameObjectAdd(go, count, obj);
-        //}
-        //{
-        //    GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
-        //    ModelInstance* mi = (ModelInstance*)obj.data;
-        //    mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
-        //    mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
-        //    MdGameObjectAdd(go, count, obj);
-        //}
-        {
-            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
-            CameraManager* cm = (CameraManager*)obj.data;
-            MdGameObjectAdd(go, count, obj);
-        }
     }
 }
 }
@@ -551,6 +671,8 @@ i32 main() {
         MEGABYTES(128),
         MEGABYTES(4),
         MEGABYTES(4));
+    mdEngine::textDrawingStyleDefault.font = resources::fonts[resources::FONT_GAME];
+    mdEngine::textDrawingStyleDefault.size = 48;
     MdGameInit();
     MdDebugInit();
     
@@ -835,24 +957,24 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
 
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].Update != nullptr) {
+        if (gameObjects[i].active && gameObjects[i].Update != nullptr) {
             gameObjects[i].Update(gameObjects[i].data);
         }
-        if (gameObjects[i].UpdateScript != nullptr) {
+        if (gameObjects[i].active && gameObjects[i].UpdateScript != nullptr) {
             gameObjects[i].UpdateScript(&gameObjects[i], gameObjects[i].data);
         }
     }
 }
 void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].Draw3d != nullptr) {
+        if (gameObjects[i].visible && gameObjects[i].Draw3d != nullptr) {
             gameObjects[i].Draw3d(gameObjects[i].data);
         }
     }
 }
 void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
     for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].DrawUi != nullptr) {
+        if (gameObjects[i].visible && gameObjects[i].DrawUi != nullptr) {
             gameObjects[i].DrawUi(gameObjects[i].data);
         }
     }
