@@ -379,8 +379,163 @@ void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
 void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
 
-void SceneSetup01(GameObject* go, i32* count);
-void SceneSetup_PriestReachout(GameObject* go, i32* count);
+namespace scenes {
+namespace priest_reachout {
+    void TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
+        i32 timeValue = 0;
+        GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
+    }
+    void TextureInstanceMoon_ScriptUpdate(GameObject* obj, void* data) {
+        i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
+        time++;
+        TextureInstance* ti = (TextureInstance*)data;
+        SetShaderValue(
+            *ti->shader,
+            GetShaderLocation(*ti->shader, "time"),
+            &time,
+            SHADER_UNIFORM_INT);
+        GameObjectVariableSet(obj, "time", MD_TYPE_I32, &time);
+    }
+    void Scene(GameObject* go, i32* count) {
+        MemoryPool* mp = &mdEngine::sceneMemory;
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            GameObjectAddScript(&obj,TextureInstanceMoon_ScriptInit,TextureInstanceMoon_ScriptUpdate);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_01];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_01_MIDDLE_GROUND]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_02];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_02_FENCE]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_03];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_03_BODY_MASK]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_04];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_04_BODY_DETAIL]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_05];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_05_ARM_MASK]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_06];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_06_ARM_DETAIL]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_07];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_07_CROSS]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
+            TextureInstance* ti = (TextureInstance*)obj.data;
+            ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_08];
+            TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_08_FOREGROUND]);
+            TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
+            MdGameObjectAdd(go, count, obj);
+        }
+
+        return;
+        {
+            BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL1].meshes[0]);
+            v3 level1_position = bb.min;
+            v3 level1_size = bb.max - bb.min;
+
+            Heightmap* hm = MemoryReserve<Heightmap>(mp);
+            HeightmapGenerationInfo hgi = {};
+            hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
+            hgi.resdiv = 0;
+            hgi.size = level1_size;
+            hgi.position = level1_position;
+            HeightmapInit(hm, hgi);
+
+            ForestGenerationInfo fgi = {};
+            fgi.density = 0.01f;
+            fgi.heightmap = hm;
+            fgi.position = {level1_position.x, level1_position.z};
+            fgi.size = {level1_size.x, level1_size.z};
+            fgi.randomTiltDegrees = 10.f;
+            fgi.randomYDip = 2.f;
+            fgi.randomPositionOffset = 0.5f;
+            fgi.treeChance = 50.f;
+
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
+            InstanceRenderer* ir = (InstanceRenderer*)obj.data;
+            InstanceRendererCreate_InitForest(
+                ir,
+                resources::images[resources::IMAGE_TERRAINMAP_LEVEL1],
+                fgi,
+                resources::models[resources::MODEL_TREE].meshes[0],
+                resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
+                mp,
+                &mdEngine::scratchMemory);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
+            ModelInstance* mi = (ModelInstance*)obj.data;
+            mi->model = resources::models[resources::MODEL_LEVEL1];        
+            mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
+            MdGameObjectAdd(go, count, obj);
+        }
+        //{
+        //    GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
+        //    Cab* cab = (Cab*)obj.data;
+        //    cab->model = resources::models[resources::MODEL_CAB];
+        //    MdGameObjectAdd(go, count, obj);
+        //}
+        //{
+        //    GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
+        //    ModelInstance* mi = (ModelInstance*)obj.data;
+        //    mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
+        //    mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
+        //    MdGameObjectAdd(go, count, obj);
+        //}
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+            CameraManager* cm = (CameraManager*)obj.data;
+            MdGameObjectAdd(go, count, obj);
+        }
+    }
+}
+}
 
 i32 main() {
     SetTraceLogLevel(4);
@@ -399,7 +554,7 @@ i32 main() {
     MdGameInit();
     MdDebugInit();
     
-    SceneSetup_PriestReachout(global::gameObjects, &global::gameObjectCount);
+    scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -474,181 +629,6 @@ void TextureInstanceDrawImGui(void* _ti) {
     // TODO: Move texture selection combo out of instance
     if (ImGui::Combo("Texture", &ti->_imguiTextureIndex, debug::imguiEditorTexturePaths)) {
         TextureInstanceSetTexture(ti, &resources::textures[ti->_imguiTextureIndex]);
-    }
-}
-
-void SceneSetup01(GameObject* go, i32* count) {
-    MemoryPool* mp = &mdEngine::sceneMemory;
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_SKYBOX, mp);
-        Skybox* sb = (Skybox*)obj.data;
-        SkyboxInit(sb, &resources::shaders[resources::SHADER_SKYBOX], &resources::images[resources::IMAGE_SKYBOX]);
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
-        ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_DEFAULT_HEIGHTMAP];
-        MdGameObjectAdd(go, count, obj);
-    }
-    MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAB, mp));
-    MdGameObjectAdd(go, count, MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, &mdEngine::sceneMemory));
-};
-
-void ScenePriestReachout_TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
-    i32 timeValue = 0;
-    GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
-}
-void ScenePriestReachout_TextureInstanceMoon_ScriptUpdate(GameObject* obj, void* data) {
-    i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
-    time++;
-    TextureInstance* ti = (TextureInstance*)data;
-    SetShaderValue(
-        *ti->shader,
-        GetShaderLocation(*ti->shader, "time"),
-        &time,
-        SHADER_UNIFORM_INT);
-    GameObjectVariableSet(obj, "time", MD_TYPE_I32, &time);
-}
-void SceneSetup_PriestReachout(GameObject* go, i32* count) {
-    MemoryPool* mp = &mdEngine::sceneMemory;
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        GameObjectAddScript(
-            &obj,
-            ScenePriestReachout_TextureInstanceMoon_ScriptInit,
-            ScenePriestReachout_TextureInstanceMoon_ScriptUpdate);
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_01];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_01_MIDDLE_GROUND]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_02];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_02_FENCE]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_03];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_03_BODY_MASK]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_04];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_04_BODY_DETAIL]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_05];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_05_ARM_MASK]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_06];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_06_ARM_DETAIL]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_07];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_07_CROSS]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_TEXTURE_INSTANCE, mp);
-        TextureInstance* ti = (TextureInstance*)obj.data;
-        ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_08];
-        TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_08_FOREGROUND]);
-        TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-        MdGameObjectAdd(go, count, obj);
-    }
-
-    return;
-    {
-        BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL1].meshes[0]);
-        v3 level1_position = bb.min;
-        v3 level1_size = bb.max - bb.min;
-
-        Heightmap* hm = MemoryReserve<Heightmap>(mp);
-        HeightmapGenerationInfo hgi = {};
-        hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
-        hgi.resdiv = 0;
-        hgi.size = level1_size;
-        hgi.position = level1_position;
-        HeightmapInit(hm, hgi);
-
-        ForestGenerationInfo fgi = {};
-        fgi.density = 0.01f;
-        fgi.heightmap = hm;
-        fgi.position = {level1_position.x, level1_position.z};
-        fgi.size = {level1_size.x, level1_size.z};
-        fgi.randomTiltDegrees = 10.f;
-        fgi.randomYDip = 2.f;
-        fgi.randomPositionOffset = 0.5f;
-        fgi.treeChance = 50.f;
-
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
-        InstanceRenderer* ir = (InstanceRenderer*)obj.data;
-        InstanceRendererCreate_InitForest(
-            ir,
-            resources::images[resources::IMAGE_TERRAINMAP_LEVEL1],
-            fgi,
-            resources::models[resources::MODEL_TREE].meshes[0],
-            resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
-            mp,
-            &mdEngine::scratchMemory);
-        MdGameObjectAdd(go, count, obj);
-    }
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
-        ModelInstance* mi = (ModelInstance*)obj.data;
-        mi->model = resources::models[resources::MODEL_LEVEL1];        
-        mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
-        MdGameObjectAdd(go, count, obj);
-    }
-    //{
-    //    GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
-    //    Cab* cab = (Cab*)obj.data;
-    //    cab->model = resources::models[resources::MODEL_CAB];
-    //    MdGameObjectAdd(go, count, obj);
-    //}
-    //{
-    //    GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Priest");
-    //    ModelInstance* mi = (ModelInstance*)obj.data;
-    //    mi->model = resources::models[resources::MODEL_DEFAULT_PLANE];
-    //    mi->model.materials->maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_REACHOUT_PRIEST];
-    //    MdGameObjectAdd(go, count, obj);
-    //}
-    {
-        GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
-        CameraManager* cm = (CameraManager*)obj.data;
-        MdGameObjectAdd(go, count, obj);
     }
 }
 

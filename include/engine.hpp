@@ -1726,6 +1726,9 @@ void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type) {
         obj->variableIndices[name],
         type);
 }
+// TODO: Create some sort of global state where calling this function sets the currently scoped game instance.
+// This is to get rid of a lot of the vars passed to this function. 'obj' and 'type' can be removed enirely.
+// 'value' can be replaced with an actual typed variable. Same thing should go for GameObjectVariableGet
 void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* value) {
     if (obj->variableIndices.find(name) == obj->variableIndices.end()) {
         const char* log = TextFormat(
@@ -1738,8 +1741,8 @@ void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* va
     }
     VariableDynamicBufferSet(&obj->variableBuffer, obj->variableIndices[name], type, value);
 }
+// TODO: Change variable dynamic buffer initialization to happen here
 void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript) {
-    // TODO: Change variable dynamic buffer initialization to happen here
     initScript(obj, &obj->data);
     obj->UpdateScript = updateScript;
 }
