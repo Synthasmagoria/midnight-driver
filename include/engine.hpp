@@ -883,6 +883,7 @@ struct DialogueSequence;
 struct DialogueSequenceSection;
 struct ModelInstance;
 struct ModelInstanceInstanced;
+struct MeshInstance;
 struct ParticleSystem;
 struct TextureInstance;
 struct Skybox;
@@ -921,6 +922,16 @@ struct ModelInstance {
 void* ModelInstanceCreate(MemoryPool* mp);
 void ModelInstanceDraw3d(ModelInstance* mi);
 void ModelInstanceDrawImGui(ModelInstance* mi);
+
+struct MeshInstance {
+    Mesh mesh;
+    Material material;
+    Color tint;
+    MdTransform transform;
+};
+void* MeshInstanceCreate(MemoryPool* mp);
+void MeshInstanceDraw3d(MeshInstance* mi);
+void MeshInstanceDrawImGui(MeshInstance* mi);
 
 #define PARTICLE_SYSTEM_MAX_PARTICLES 512
 struct ParticleSystem {
@@ -1024,6 +1035,7 @@ namespace mdEngine {
 enum MD_GAME_ENGINE_OBJECTS {
     OBJECT_DIALOGUE_SEQUENCE,
     OBJECT_MODEL_INSTANCE,
+    OBJECT_MESH_INSTANCE,
     OBJECT_INSTANCE_RENDERER,
     OBJECT_PARTICLE_SYSTEM,
     OBJECT_TEXTURE_INSTANCE,
@@ -1051,6 +1063,11 @@ void MdEngineRegisterObjects() {
     def.Draw3d = (GameInstanceEventFunction)ModelInstanceDraw3d;
     def.DrawImGui = (GameInstanceEventFunction)ModelInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_MODEL_INSTANCE);
+
+    def = GameObjectDefinitionCreate("Mesh Instance", MeshInstanceCreate, mp);
+    def.Draw3d = (GameInstanceEventFunction)MeshInstanceDraw3d;
+    def.DrawImGui = (GameInstanceEventFunction)MeshInstanceDrawImGui;
+    MdEngineRegisterObject(def, OBJECT_MESH_INSTANCE);
 
     def = GameObjectDefinitionCreate("Instance Renderer", InstanceRendererCreate, mp);
     def.Draw3d = (GameInstanceEventFunction)InstanceRendererDraw3d;
@@ -2404,6 +2421,21 @@ void ModelInstanceDraw3d(ModelInstance* mi) {
     DrawModelTransform(mi->model, mi->transform.matrix, mi->tint);
 }
 void ModelInstanceDrawImGui(ModelInstance* mi) {
+    TransformDrawImGui(&mi->transform);
+}
+
+void* MeshInstanceCreate(MemoryPool* mp) {
+    MeshInstance* mi = MemoryReserve<MeshInstance>(mp);
+    mi->mesh = {};
+    mi->material = LoadMaterialDefault();
+    mi->tint = WHITE;
+    mi->transform = TransformCreate();
+    return mi;
+}
+void MeshInstanceDraw3d(MeshInstance* mi) {
+    DrawMesh(mi->mesh, mi->material, mi->transform.matrix);
+}
+void MeshInstanceDrawImGui(MeshInstance* mi) {
     TransformDrawImGui(&mi->transform);
 }
 

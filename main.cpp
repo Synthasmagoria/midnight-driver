@@ -1,3 +1,5 @@
+#include <cstring>
+#include <string.h>
 #define NO_FONT_AWESOME
 
 #include "raylib/raylib.h"
@@ -461,7 +463,7 @@ namespace priest_reachout {
         TypeListPushBackI32(link, 3);
         TypeListPushBackPtr(dseq->sections, dss); // 2
 
-        dss = DialogueSequenceSectionCreate(1, 3, mp); 
+        dss = DialogueSequenceSectionCreate(1, 3, mp);
         text = dss->text;
         opt = dss->options;
         link = dss->link;
@@ -475,7 +477,7 @@ namespace priest_reachout {
         TypeListPushBackI32(link, 5);
         TypeListPushBackPtr(dseq->sections, dss); // 3
 
-        dss = DialogueSequenceSectionCreate(1, 0, mp); 
+        dss = DialogueSequenceSectionCreate(1, 0, mp);
         text = dss->text;
         opt = dss->options;
         link = dss->link;
@@ -532,7 +534,7 @@ namespace priest_reachout {
             GetShaderLocation(*ti->shader, "color"),
             &colorDiffuse,
             SHADER_UNIFORM_VEC4);
-        
+
         Tween* t = (Tween*)GameObjectVariableGet(obj, "fadeTween", MD_TYPE_TWEEN);
         TweenStep(t);
     }
@@ -689,7 +691,7 @@ namespace priest_reachout {
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
             ModelInstance* mi = (ModelInstance*)obj.data;
-            mi->model = resources::models[resources::MODEL_LEVEL1];        
+            mi->model = resources::models[resources::MODEL_LEVEL1];
             mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
             MdGameObjectAdd(go, count, obj);
         }
@@ -716,11 +718,118 @@ namespace model_viewer_scene {
     void Scene(GameObject* go, i32* count) {
         debug::cameraEnabled = true;
         MemoryPool* mp = &mdEngine::sceneMemory;
+
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Model");
             ModelInstance *mi = (ModelInstance*)obj.data;
-            mi->model = resources::models[resources::MODEL_LEVEL0];
+            mi->model = resources::models[resources::MODEL_TREE];
             GameObjectAddScript(&obj, (GameObjectScriptFunc)ModelInstanceObject_Create, (GameObjectScriptFunc)ModelInstanceObject_Update);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+            MdGameObjectAdd(go, count, obj);
+        }
+    }
+}
+Mesh DuplicateMesh(Mesh src) {
+    Mesh m = {};
+    m.vertexCount = src.vertexCount;
+    m.triangleCount = src.triangleCount;
+    if (src.vertices != NULL) {
+        i32 size = sizeof(*m.vertices) * m.vertexCount * 3;
+        m.vertices = (float*)malloc(size);
+        memcpy(m.vertices, src.vertices, size);
+    }
+    if (src.texcoords != NULL) {
+        i32 size = sizeof(*m.texcoords) * m.vertexCount * 2;
+        m.texcoords = (float*)malloc(size);
+        memcpy(m.texcoords, src.texcoords, size);
+    }
+    if (src.texcoords2 != NULL) {
+        i32 size = sizeof(*m.texcoords2) * m.vertexCount * 2;
+        m.texcoords2 = (float*)malloc(size);
+        memcpy(m.texcoords2, src.texcoords2, size);
+    }
+    if (src.normals != NULL) {
+        i32 size = sizeof(*m.normals) * m.vertexCount * 3;
+        m.normals = (float*)malloc(size);
+        memcpy(m.normals, src.normals, size);
+    }
+    if (src.tangents != NULL) {
+        i32 size = sizeof(*m.tangents) * m.vertexCount * 4;
+        m.tangents = (float*)malloc(size);
+        memcpy(m.tangents, src.tangents, size);
+    }
+    if (src.colors != NULL) {
+        i32 size = sizeof(*m.colors) * m.vertexCount * 4;
+        m.colors = (unsigned char*)malloc(size);
+        memcpy(m.colors, src.colors, size);
+    }
+    if (src.indices != NULL) {
+        i32 size = sizeof(*m.indices) * m.triangleCount * 3;
+        m.indices = (unsigned short*)malloc(size);
+        memcpy(m.indices, src.indices, size);
+    }
+    UploadMesh(&m, false);
+    return m;
+}
+
+Mesh DuplicateMeshNonIndexed(Mesh src) {
+    if (src.indices == NULL) {
+        return {};
+    }
+    Mesh m = {};
+    m.vertexCount = src.triangleCount * 3;
+    m.triangleCount = src.triangleCount;
+    if (src.vertices != NULL) {
+        i32 size = sizeof(*m.vertices) * m.vertexCount * 3;
+        m.vertices = (float*)malloc(size);
+    }
+    if (src.texcoords != NULL) {
+        i32 size = sizeof(*m.texcoords) * m.vertexCount * 2;
+        m.texcoords = (float*)malloc(size);
+    }
+    // if (src.texcoords2 != NULL) {
+    //     i32 size = sizeof(*m.texcoords2) * m.vertexCount * 2;
+    //     m.texcoords2 = (float*)malloc(size);
+    // }
+    // if (src.normals != NULL) {
+    //     i32 size = sizeof(*m.normals) * m.vertexCount * 3;
+    //     m.normals = (float*)malloc(size);
+    // }
+    // if (src.tangents != NULL) {
+    //     i32 size = sizeof(*m.tangents) * m.vertexCount * 4;
+    //     m.tangents = (float*)malloc(size);
+    // }
+    // if (src.colors != NULL) {
+    //     i32 size = sizeof(*m.colors) * m.vertexCount * 4;
+    //     m.colors = (unsigned char*)malloc(size);
+    // }
+    for (i32 i = 0; i < m.vertexCount; i++) {
+        if (src.vertices != NULL) {
+            m.vertices[i * 3 + 0] = src.vertices[src.indices[i] * 3 + 0];
+            m.vertices[i * 3 + 1] = src.vertices[src.indices[i] * 3 + 1];
+            m.vertices[i * 3 + 2] = src.vertices[src.indices[i] * 3 + 2];
+        }
+        if (src.texcoords != NULL) {
+            m.texcoords[i * 2 + 0] = src.texcoords[src.indices[i] * 2 + 0];
+            m.texcoords[i * 2 + 1] = src.texcoords[src.indices[i] * 2 + 1];
+        }
+    }
+    UploadMesh(&m, false);
+    return m;
+}
+namespace mesh_index_removal {
+    void Scene(GameObject* go, i32* count) {
+        debug::cameraEnabled = true;
+        MemoryPool* mp = &mdEngine::sceneMemory;
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MESH_INSTANCE, mp, "Model");
+            MeshInstance *mi = (MeshInstance*)obj.data;
+            Model treeModel = resources::models[resources::MODEL_TREE];
+            mi->mesh = DuplicateMeshNonIndexed(treeModel.meshes[0]);
+            mi->material = treeModel.materials[treeModel.meshMaterial[0]];
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -749,9 +858,9 @@ i32 main() {
     mdEngine::textDrawingStyleDefault.size = 48;
     MdGameInit();
     MdDebugInit();
-    
-    scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
-    //scenes::model_viewer_scene::Scene(global::gameObjects, &global::gameObjectCount);
+
+    //scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
+    scenes::mesh_index_removal::Scene(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -1103,7 +1212,7 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
             Color colorTr = {imageData[itr], imageData[itr+1], imageData[itr+2], 255};
             Color colorBl = {imageData[ibl], imageData[ibl+1], imageData[ibl+2], 255};
             Color colorBr = {imageData[ibr], imageData[ibr+1], imageData[ibr+2], 255};
-            
+
             v2 imagePositionFactor = Vector2Fract(imagePosition);
             Color colorHorizontalTop = ColorLerp(colorTl, colorTr, imagePositionFactor.x);
             Color colorHorizontalBottom = ColorLerp(colorBl, colorBr, imagePositionFactor.x);
@@ -1221,7 +1330,7 @@ void CabUpdate(Cab* cab) {
     v2 horizontalVelocity = Vector2Normalize({horizontalDirection.x, horizontalDirection.z}) * stepSpeed;
     cab->position.x += horizontalVelocity.x;
     cab->position.z += horizontalVelocity.y;
-    
+
     Heightmap* hm = (Heightmap*)mdEngine::groups["terrainHeightmap"];
     v3 positionBehind = v3{
             cab->position.x - horizontalDirection.x,
@@ -1371,7 +1480,7 @@ void TextureInstance_PriestReachoutDrawUi(void* _ti) {
     Shader shd = *ti->shader;
     SetShaderValue(
         shd,
-        GetShaderLocation(shd, "time"), 
+        GetShaderLocation(shd, "time"),
         &ti->time,
         SHADER_UNIFORM_FLOAT);
     SetShaderValueTexture(
