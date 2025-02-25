@@ -790,34 +790,132 @@ Mesh DuplicateMeshNonIndexed(Mesh src) {
         i32 size = sizeof(*m.texcoords) * m.vertexCount * 2;
         m.texcoords = (float*)malloc(size);
     }
-    // if (src.texcoords2 != NULL) {
-    //     i32 size = sizeof(*m.texcoords2) * m.vertexCount * 2;
-    //     m.texcoords2 = (float*)malloc(size);
-    // }
-    // if (src.normals != NULL) {
-    //     i32 size = sizeof(*m.normals) * m.vertexCount * 3;
-    //     m.normals = (float*)malloc(size);
-    // }
-    // if (src.tangents != NULL) {
-    //     i32 size = sizeof(*m.tangents) * m.vertexCount * 4;
-    //     m.tangents = (float*)malloc(size);
-    // }
-    // if (src.colors != NULL) {
-    //     i32 size = sizeof(*m.colors) * m.vertexCount * 4;
-    //     m.colors = (unsigned char*)malloc(size);
-    // }
+    if (src.texcoords2 != NULL) {
+        i32 size = sizeof(*m.texcoords2) * m.vertexCount * 2;
+        m.texcoords2 = (float*)malloc(size);
+    }
+    if (src.normals != NULL) {
+        i32 size = sizeof(*m.normals) * m.vertexCount * 3;
+        m.normals = (float*)malloc(size);
+    }
+    if (src.tangents != NULL) {
+        i32 size = sizeof(*m.tangents) * m.vertexCount * 4;
+        m.tangents = (float*)malloc(size);
+    }
+    if (src.colors != NULL) {
+        i32 size = sizeof(*m.colors) * m.vertexCount * 4;
+        m.colors = (unsigned char*)malloc(size);
+    }
     for (i32 i = 0; i < m.vertexCount; i++) {
         if (src.vertices != NULL) {
             m.vertices[i * 3 + 0] = src.vertices[src.indices[i] * 3 + 0];
             m.vertices[i * 3 + 1] = src.vertices[src.indices[i] * 3 + 1];
             m.vertices[i * 3 + 2] = src.vertices[src.indices[i] * 3 + 2];
         }
+    }
+    for (i32 i = 0; i < m.vertexCount; i++) {
         if (src.texcoords != NULL) {
             m.texcoords[i * 2 + 0] = src.texcoords[src.indices[i] * 2 + 0];
             m.texcoords[i * 2 + 1] = src.texcoords[src.indices[i] * 2 + 1];
         }
     }
+    for (i32 i = 0; i < m.vertexCount; i++) {
+        if (src.texcoords2 != NULL) {
+            m.texcoords2[i * 2 + 0] = src.texcoords2[src.indices[i] * 2 + 0];
+            m.texcoords2[i * 2 + 1] = src.texcoords2[src.indices[i] * 2 + 1];
+        }
+    }
+    for (i32 i = 0; i < m.vertexCount; i++) {
+        if (src.normals != NULL) {
+            m.normals[i * 3 + 0] = src.normals[src.indices[i] * 3 + 0];
+            m.normals[i * 3 + 1] = src.normals[src.indices[i] * 3 + 1];
+            m.normals[i * 3 + 2] = src.normals[src.indices[i] * 3 + 2];
+        }
+    }
+    for (i32 i = 0; i < m.vertexCount; i++) {
+        if (src.tangents != NULL) {
+            m.tangents[i * 3 + 0] = src.tangents[src.indices[i] * 3 + 0];
+            m.tangents[i * 3 + 1] = src.tangents[src.indices[i] * 3 + 1];
+            m.tangents[i * 3 + 2] = src.tangents[src.indices[i] * 3 + 2];
+            m.tangents[i * 3 + 3] = src.tangents[src.indices[i] * 3 + 3];
+        }
+    }
+    for (i32 i = 0; i < m.vertexCount; i++) {
+        if (src.colors != NULL) {
+            m.colors[i * 3 + 0] = src.colors[src.indices[i] * 3 + 0];
+            m.colors[i * 3 + 1] = src.colors[src.indices[i] * 3 + 1];
+            m.colors[i * 3 + 2] = src.colors[src.indices[i] * 3 + 2];
+            m.colors[i * 3 + 3] = src.colors[src.indices[i] * 3 + 3];
+        }
+    }
     UploadMesh(&m, false);
+    return m;
+}
+Mesh DuplicateMeshNonIndexedReconstruct(Mesh src, unsigned int* indices)
+{
+    Mesh m = Mesh{0};
+    m.vertexCount = src.triangleCount * 3;
+    m.triangleCount = src.triangleCount;
+    if (src.vertices != NULL) {
+        m.vertices = (float*)RL_MALLOC(sizeof(*m.vertices) * m.vertexCount * 3);
+    }
+    if (src.texcoords != NULL) {
+        m.texcoords = (float*)RL_MALLOC(sizeof(*m.texcoords) * m.vertexCount * 2);
+    }
+    if (src.texcoords2 != NULL) {
+        m.texcoords2 = (float*)RL_MALLOC(sizeof(*m.texcoords2) * m.vertexCount * 2);
+    }
+    if (src.normals != NULL) {
+        m.normals = (float*)RL_MALLOC(sizeof(*m.normals) * m.vertexCount * 3);
+    }
+    if (src.tangents != NULL) {
+        m.tangents = (float*)RL_MALLOC(sizeof(*m.tangents) * m.vertexCount * 4);
+    }
+    if (src.colors != NULL) {
+        m.colors = (unsigned char*)RL_MALLOC(sizeof(*m.colors) * m.vertexCount * 4);
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.vertices != NULL) {
+            m.vertices[i * 3 + 0] = src.vertices[indices[i] * 3 + 0];
+            m.vertices[i * 3 + 1] = src.vertices[indices[i] * 3 + 1];
+            m.vertices[i * 3 + 2] = src.vertices[indices[i] * 3 + 2];
+        }
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.texcoords != NULL) {
+            m.texcoords[i * 2 + 0] = src.texcoords[indices[i] * 2 + 0];
+            m.texcoords[i * 2 + 1] = src.texcoords[indices[i] * 2 + 1];
+        }
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.texcoords2 != NULL) {
+            m.texcoords2[i * 2 + 0] = src.texcoords2[indices[i] * 2 + 0];
+            m.texcoords2[i * 2 + 1] = src.texcoords2[indices[i] * 2 + 1];
+        }
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.normals != NULL) {
+            m.normals[i * 3 + 0] = src.normals[indices[i] * 3 + 0];
+            m.normals[i * 3 + 1] = src.normals[indices[i] * 3 + 1];
+            m.normals[i * 3 + 2] = src.normals[indices[i] * 3 + 2];
+        }
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.tangents != NULL) {
+            m.tangents[i * 4 + 0] = src.tangents[indices[i] * 4 + 0];
+            m.tangents[i * 4 + 1] = src.tangents[indices[i] * 4 + 1];
+            m.tangents[i * 4 + 2] = src.tangents[indices[i] * 4 + 2];
+            m.tangents[i * 4 + 3] = src.tangents[indices[i] * 4 + 3];
+        }
+    }
+    for (int i = 0; i < m.vertexCount; i++) {
+        if (src.colors != NULL) {
+            m.colors[i * 4 + 0] = src.colors[indices[i] * 4 + 0];
+            m.colors[i * 4 + 1] = src.colors[indices[i] * 4 + 1];
+            m.colors[i * 4 + 2] = src.colors[indices[i] * 4 + 2];
+            m.colors[i * 4 + 3] = src.colors[indices[i] * 4 + 3];
+        }
+    }
     return m;
 }
 namespace mesh_index_removal {
@@ -825,11 +923,12 @@ namespace mesh_index_removal {
         debug::cameraEnabled = true;
         MemoryPool* mp = &mdEngine::sceneMemory;
         {
-            GameObject obj = MdEngineInstanceGameObject(OBJECT_MESH_INSTANCE, mp, "Model");
-            MeshInstance *mi = (MeshInstance*)obj.data;
-            Model treeModel = resources::models[resources::MODEL_TREE];
-            mi->mesh = DuplicateMeshNonIndexed(treeModel.meshes[0]);
-            mi->material = treeModel.materials[treeModel.meshMaterial[0]];
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Model");
+            ModelInstance *mi = (ModelInstance*)obj.data;
+            // Model treeModel = resources::models[resources::MODEL_TREE];
+            // mi->mesh = DuplicateMeshNonIndexed(treeModel.meshes[0]);
+            // mi->material = treeModel.materials[treeModel.meshMaterial[0]];
+            mi->model = resources::models[resources::MODEL_LEVEL0];
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -841,7 +940,7 @@ namespace mesh_index_removal {
 }
 
 i32 main() {
-    SetTraceLogLevel(4);
+    SetTraceLogLevel(2);
     InitWindow(global::screenWidth, global::screenHeight, "Midnight Driver");
     SetTargetFPS(FRAMERATE);
     rlImGuiSetup(true);
