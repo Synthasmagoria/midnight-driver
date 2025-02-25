@@ -557,6 +557,7 @@ enum INPUT {
     INPUT_DOWN,
     INPUT_UP,
     INPUT_DEBUG_TOGGLE,
+    INPUT_DEBUG_ACCEPT,
     INPUT_DEBUG_LEFT,
     INPUT_DEBUG_RIGHT,
     INPUT_DEBUG_FORWARD,
@@ -1287,6 +1288,7 @@ void InputInit(Input* input) {
     input->map[INPUT_DOWN] = KEY_DOWN;
     input->map[INPUT_UP] = KEY_UP;
     input->map[INPUT_DEBUG_TOGGLE] = KEY_BACKSPACE;
+    input->map[INPUT_DEBUG_ACCEPT] = KEY_ENTER;
     input->map[INPUT_DEBUG_LEFT] = KEY_A;
     input->map[INPUT_DEBUG_RIGHT] = KEY_D;
     input->map[INPUT_DEBUG_FORWARD] = KEY_W;

@@ -695,6 +695,40 @@ namespace priest_reachout {
         }
     }
 }
+namespace model_viewer_scene {
+    void ModelInstanceObject_Create(GameObject* obj, ModelInstance* mi) {
+        i32 shaderType = 0;
+        GameObjectVariablePush(obj, "shaderType", MD_TYPE_I32, &shaderType);
+    }
+    void ModelInstanceObject_Update(GameObject* obj, ModelInstance* mi) {
+        i32 shaderType = *(i32*)GameObjectVariableGet(obj, "shaderType", MD_TYPE_I32);
+        if (InputCheckPressedMod(INPUT_DEBUG_ACCEPT, false, true, false)) {
+            shaderType = shaderType == 0 ? 1 : 0;
+            if (shaderType == 0) {
+                mi->model.materials[0].shader = resources::shaders[resources::SHADER_PASSTHROUGH];
+            } else {
+                mi->model.materials[0].shader = resources::shaders[resources::SHADER_LIT];
+            }
+            GameObjectVariableSet(obj, "shaderType", MD_TYPE_I32, &shaderType);
+        }
+    }
+
+    void Scene(GameObject* go, i32* count) {
+        debug::cameraEnabled = true;
+        MemoryPool* mp = &mdEngine::sceneMemory;
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Model");
+            ModelInstance *mi = (ModelInstance*)obj.data;
+            mi->model = resources::models[resources::MODEL_LEVEL0];
+            GameObjectAddScript(&obj, (GameObjectScriptFunc)ModelInstanceObject_Create, (GameObjectScriptFunc)ModelInstanceObject_Update);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_CAMERA_MANAGER, mp);
+            MdGameObjectAdd(go, count, obj);
+        }
+    }
+}
 }
 
 i32 main() {
@@ -717,6 +751,7 @@ i32 main() {
     MdDebugInit();
     
     scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
+    //scenes::model_viewer_scene::Scene(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -724,8 +759,9 @@ i32 main() {
         if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, false, false)) {
             debug::cameraEnabled = !debug::cameraEnabled;
         } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, true, false)) {
-            debug::overlayEnabled = !debug::overlayEnabled;
+            // Nothing for now
         } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, true, true, false)) {
+            debug::overlayEnabled = !debug::overlayEnabled;
             debug::cursorEnabled = !debug::cursorEnabled;
         }
 
