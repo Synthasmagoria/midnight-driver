@@ -48,9 +48,9 @@ struct Cab {
     bool meshVisible[10];
 };
 void* CabCreate(MemoryPool* mp);
-void CabUpdate(void* cab);
-void CabDraw3d(void* cab);
-void CabDrawImGui(void* cab);
+void CabUpdate(Cab* cab);
+void CabDraw3d(Cab* cab);
+void CabDrawImGui(Cab* cab);
 v3 CabGetFrontSeatPosition(Cab* cab);
 
 struct CameraManager {
@@ -62,9 +62,9 @@ struct CameraManager {
     struct_internal constexpr float debugCameraSpeedMax = 5.f;
 };
 void* CameraManagerCreate(MemoryPool* mp);
-void CameraManagerUpdate(void* _camMan);
-void CameraManagerDrawUi(void* _camMan);
-void CameraManagerFree(void* _camMan);
+void CameraManagerUpdate(CameraManager* camMan);
+void CameraManagerDrawUi(CameraManager* camMan);
+void CameraManagerFree(CameraManager* camMan);
 
 void CameraUpdateDebug(Camera* camera, float speed);
 void CameraUpdateCab(Camera* camera, Cab* cab);
@@ -333,15 +333,15 @@ void MdGameRegisterObjects() {
     MemoryPool* mp = &mdEngine::engineMemory;
 
     def = GameObjectDefinitionCreate("Cab", CabCreate, mp);
-    def.Draw3d = CabDraw3d;
-    def.DrawImGui = CabDrawImGui;
-    def.Update = CabUpdate;
+    def.Draw3d = (GameInstanceEventFunction)CabDraw3d;
+    def.DrawImGui = (GameInstanceEventFunction)CabDrawImGui;
+    def.Update = (GameInstanceEventFunction)CabUpdate;
     MdEngineRegisterObject(def, OBJECT_CAB);
 
     def = GameObjectDefinitionCreate("Camera Manager", CameraManagerCreate, mp);
-    def.Update = CameraManagerUpdate;
-    def.DrawUi = CameraManagerDrawUi;
-    def.Free = CameraManagerFree;
+    def.Update = (GameInstanceEventFunction)CameraManagerUpdate;
+    def.DrawUi = (GameInstanceEventFunction)CameraManagerDrawUi;
+    def.Free = (GameInstanceEventFunction)CameraManagerFree;
     MdEngineRegisterObject(def, OBJECT_CAMERA_MANAGER);
 }
 
@@ -497,9 +497,7 @@ namespace priest_reachout {
         TypeListPushBackPtr(dseq->sections, dss); // 5
     }
 
-    void TextureInstanceMoon_ScriptInit(GameObject* obj, void* data) {
-        TextureInstance* ti = (TextureInstance*)obj->data;
-
+    void TextureInstanceMoon_ScriptInit(GameObject* obj, TextureInstance* ti) {
         i32 timeValue = 0;
         GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
 
@@ -518,9 +516,7 @@ namespace priest_reachout {
         TweenStart(&t);
         GameObjectVariablePush(obj, "fadeTween", MD_TYPE_TWEEN, &t);
     }
-    void TextureInstanceMoon_ScriptUpdate(GameObject* obj, void* data) {
-        TextureInstance* ti = (TextureInstance*)obj->data;
-
+    void TextureInstanceMoon_ScriptUpdate(GameObject* obj, TextureInstance* ti) {
         i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
         time++;
         SetShaderValue(
@@ -563,7 +559,10 @@ namespace priest_reachout {
             ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
             TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
             TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-            GameObjectAddScript(&obj,TextureInstanceMoon_ScriptInit,TextureInstanceMoon_ScriptUpdate);
+            GameObjectAddScript(
+                &obj,
+                (GameObjectScriptFunc)TextureInstanceMoon_ScriptInit,
+                (GameObjectScriptFunc)TextureInstanceMoon_ScriptUpdate);
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -580,7 +579,10 @@ namespace priest_reachout {
             ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_00];
             TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_00_MOON]);
             TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-            GameObjectAddScript(&obj,TextureInstanceMoon_ScriptInit,TextureInstanceMoon_ScriptUpdate);
+            GameObjectAddScript(
+                &obj,
+                (GameObjectScriptFunc)TextureInstanceMoon_ScriptInit,
+                (GameObjectScriptFunc)TextureInstanceMoon_ScriptUpdate);
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -775,8 +777,7 @@ i32 main() {
 
 // TODO: This implementation is only here temporarily because resources don't exist in engine.hpp
 // Separate texture selection combo from the instance to fix this
-void TextureInstanceDrawImGui(void* _ti) {
-    TextureInstance* ti = (TextureInstance*)_ti;
+void TextureInstanceDrawImGui(TextureInstance* ti) {
     v2 position = ti->_position;
     if (ImGui::DragFloat2("Position", (float*)&position)) {
         TextureInstanceSetPosition(ti, position);
@@ -1148,8 +1149,7 @@ void* CabCreate(MemoryPool* mp) {
     mdEngine::groups["cab"] = (void*)cab;
     return cab;
 }
-void CabUpdate(void* _cab) {
-    Cab* cab = (Cab*)_cab;
+void CabUpdate(Cab* cab) {
     bool inputAccelerate = mdEngine::input.down[INPUT_ACCELERATE];
     bool inputBreak = mdEngine::input.down[INPUT_BREAK];
     if (inputAccelerate && inputBreak) {
@@ -1209,16 +1209,14 @@ void CabUpdate(void* _cab) {
     cab->_transform *= yawRotationMatrix;
     cab->_transform *= MatrixTranslate(cab->position.x, cab->position.y, cab->position.z);
 }
-void CabDraw3d(void* _cab) {
-    Cab* cab = (Cab*)_cab;
+void CabDraw3d(Cab* cab) {
     for (i32 i = 0; i < cab->model.meshCount; i++) {
         if (cab->meshVisible[i]) {
             DrawMesh(cab->model.meshes[i], cab->model.materials[cab->model.meshMaterial[i]], cab->_transform);
         }
     }
 }
-void CabDrawImGui(void* _cab) {
-    Cab* cab = (Cab*)_cab;
+void CabDrawImGui(Cab* cab) {
     ImGui::DragFloat3("Position", (float*)&cab->position, 0.05f);
     ImGui::DragFloat3("Rotation", (float*)&cab->rotation, 0.05f);
     ImGui::DragFloat3("Direction", (float*)&cab->direction, 0.05f);
@@ -1242,8 +1240,7 @@ void* CameraManagerCreate(MemoryPool* mp) {
     global::currentCamera = &camMan->playerCamera;
     return camMan;
 }
-void CameraManagerUpdate(void* _camMan) {
-    CameraManager* camMan = (CameraManager*)_camMan;
+void CameraManagerUpdate(CameraManager* camMan) {
     camMan->cameraMode = debug::cameraEnabled;
 
     if (debug::cameraEnabled && global::currentCamera != &camMan->debugCamera) {
@@ -1270,15 +1267,13 @@ void CameraManagerUpdate(void* _camMan) {
         }
     }
 }
-void CameraManagerDrawUi(void* _camMan) {
-    CameraManager* camMan = (CameraManager*)_camMan;
+void CameraManagerDrawUi(CameraManager* camMan) {
     if (camMan->cameraMode == 1) {
         DrawTextShadow("Debug cam", 4, global::screenHeight - 20, 16, RED, BLACK);
     }
     DrawCrosshair(global::screenWidth / 2, global::screenHeight / 2, WHITE);
 }
-void CameraManagerFree(void* _camMan) {
-    CameraManager* camMan = (CameraManager*)_camMan;
+void CameraManagerFree(CameraManager* camMan) {
     if (global::currentCamera == &camMan->debugCamera || global::currentCamera == &camMan->playerCamera) {
         global::currentCamera = nullptr;
     }

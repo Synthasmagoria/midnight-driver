@@ -703,24 +703,25 @@ i32 VariableDynamicBufferPush(VariableDynamicBuffer* vdb, void* value, i32 type)
 void* VariableDynamicBufferGet(VariableDynamicBuffer* vdb, i32 index, i32 type);
 void VariableDynamicBufferSet(VariableDynamicBuffer* vdb, i32 index, i32 type, void* value);
 
-typedef void*(*GameInstanceCreateFunctionSignature)(MemoryPool*);
+typedef void*(*GameInstanceCreateFunction)(MemoryPool*);
+typedef void(*GameInstanceEventFunction)(void*);
 struct GameObjectDefinition {
-    GameInstanceCreateFunctionSignature Create;
-    void (*Update) (void* data);
-    void (*Draw3d) (void* data);
-    void (*DrawUi) (void* data);
-    void (*Free) (void* data);
-    void (*DrawImGui) (void* data);
+    GameInstanceCreateFunction Create;
+    GameInstanceEventFunction Update;
+    GameInstanceEventFunction Draw3d;
+    GameInstanceEventFunction DrawUi;
+    GameInstanceEventFunction Free;
+    GameInstanceEventFunction DrawImGui;
     const char* objectName;
 };
-GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp);
-typedef void (*GameObjectScriptFunc)(GameObject* obj, void* data);
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunction createFunc, MemoryPool* mp);
+typedef void (*GameObjectScriptFunc)(GameObject* obj, void* inst);
 struct GameObject {
-    void (*Update) (void* data);
-    void (*Draw3d) (void* data);
-    void (*DrawUi) (void* data);
-    void (*Free) (void* data);
-    void (*DrawImGui) (void* data);
+    GameInstanceEventFunction Update;
+    GameInstanceEventFunction Draw3d;
+    GameInstanceEventFunction DrawUi;
+    GameInstanceEventFunction Free;
+    GameInstanceEventFunction DrawImGui;
     GameObjectScriptFunc UpdateScript;
     std::unordered_map<std::string, i32> variableIndices;
     VariableDynamicBuffer variableBuffer;
@@ -872,7 +873,7 @@ struct InstanceRenderer {
     Material* material;
 };
 void* InstanceRendererCreate(MemoryPool* mp);
-void InstanceRendererDraw3d(void* _is);
+void InstanceRendererDraw3d(InstanceRenderer* is);
 
 /*
     Game Objects
@@ -892,16 +893,16 @@ struct DialogueSequence {
     i32 sectionIndex;
 };
 void* DialogueSequenceCreate(MemoryPool* mp);
-void DialogueSequenceUpdate(void* _dseq);
-void DialogueSequenceDrawUi(void* _dseq);
+void DialogueSequenceUpdate(DialogueSequence* dseq);
+void DialogueSequenceDrawUi(DialogueSequence* dseq);
 enum DIALOGUE_SEQUENCE_LAYOUT {
     DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER,
     DIALOGUE_SEQUENCE_LAYOUT_PLACEHOLDER_BOXLESS,
     DIALOGUE_SEQUENCE_LAYOUT_COUNT
 };
 void DialogueSequenceSetLayout(DialogueSequence* dseq, i32 layout);
-void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args);
-void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* _args);
+void DialogueSequenceHandleTypewriter_TextAdvance(DialogueSequence* _dseq, EventArgs_TypewriterLineComplete* _args);
+void DialogueSequenceHandleOptions_Selected(DialogueSequence* dseq, EventArgs_DialogueOptionsSelected* _args);
 struct DialogueSequenceSection {
     StringList* text;
     StringList* options;
@@ -917,8 +918,8 @@ struct ModelInstance {
     MdTransform transform;
 };
 void* ModelInstanceCreate(MemoryPool* mp);
-void ModelInstanceDraw3d(void* _mi);
-void ModelInstanceDrawImGui(void* _mi);
+void ModelInstanceDraw3d(ModelInstance* mi);
+void ModelInstanceDrawImGui(ModelInstance* mi);
 
 #define PARTICLE_SYSTEM_MAX_PARTICLES 512
 struct ParticleSystem {
@@ -929,9 +930,9 @@ struct ParticleSystem {
     i32 count;
 };
 void* ParticleSystemCreate(MemoryPool* mp);
-void ParticleSystemFree(void* psys);
-void ParticleSystemUpdate(void* psys);
-void ParticleSystemDraw3d(void* psys);
+void ParticleSystemFree(ParticleSystem* psys);
+void ParticleSystemUpdate(ParticleSystem* psys);
+void ParticleSystemDraw3d(ParticleSystem* psys);
 
 struct TextureInstance {
     Color tint;
@@ -948,8 +949,8 @@ struct TextureInstance {
 };
 // TODO: Implement texture instance set texture
 void* TextureInstanceCreate(MemoryPool* mp);
-void TextureInstanceDrawUi(void* _ti);
-void TextureInstanceDrawImGui(void* _ti);
+void TextureInstanceDrawUi(TextureInstance* ti);
+void TextureInstanceDrawImGui(TextureInstance* ti);
 void TextureInstanceSetTexture(TextureInstance* ti, Texture* texture);
 void TextureInstanceSetSize(TextureInstance* ti, v2 size);
 void TextureInstanceSetPosition(TextureInstance* ti, v2 position);
@@ -961,8 +962,8 @@ struct Skybox {
 };
 void* SkyboxCreate(MemoryPool* mp);
 void SkyboxInit(Skybox* sb, Shader* shader, Image* image);
-void SkyboxDraw3d(void* _sb);
-void SkyboxFree(void* _sb);
+void SkyboxDraw3d(Skybox* sb);
+void SkyboxFree(Skybox* sb);
 
 /*
     Engine dependent utility definitions
@@ -1041,32 +1042,32 @@ void MdEngineRegisterObjects() {
     MemoryPool* mp = &mdEngine::engineMemory;
     GameObjectDefinition def = {};
     def = GameObjectDefinitionCreate("Dialogue Sequence", DialogueSequenceCreate, mp);
-    def.DrawUi = DialogueSequenceDrawUi;
-    def.Update = DialogueSequenceUpdate;
+    def.DrawUi = (GameInstanceEventFunction)DialogueSequenceDrawUi;
+    def.Update = (GameInstanceEventFunction)DialogueSequenceUpdate;
     MdEngineRegisterObject(def, OBJECT_DIALOGUE_SEQUENCE);
 
     def = GameObjectDefinitionCreate("Model Instance", ModelInstanceCreate, mp);
-    def.Draw3d = ModelInstanceDraw3d;
-    def.DrawImGui = ModelInstanceDrawImGui;
+    def.Draw3d = (GameInstanceEventFunction)ModelInstanceDraw3d;
+    def.DrawImGui = (GameInstanceEventFunction)ModelInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_MODEL_INSTANCE);
 
     def = GameObjectDefinitionCreate("Instance Renderer", InstanceRendererCreate, mp);
-    def.Draw3d = InstanceRendererDraw3d;
+    def.Draw3d = (GameInstanceEventFunction)InstanceRendererDraw3d;
     MdEngineRegisterObject(def, OBJECT_INSTANCE_RENDERER);
 
     def = GameObjectDefinitionCreate("Particle System", ParticleSystemCreate, mp);
-    def.Draw3d = ParticleSystemDraw3d;
-    def.Update = ParticleSystemUpdate;
-    def.Free = ParticleSystemFree;
+    def.Draw3d = (GameInstanceEventFunction)ParticleSystemDraw3d;
+    def.Update = (GameInstanceEventFunction)ParticleSystemUpdate;
+    def.Free = (GameInstanceEventFunction)ParticleSystemFree;
     MdEngineRegisterObject(def, OBJECT_PARTICLE_SYSTEM);
 
     def = GameObjectDefinitionCreate("Texture Instance", TextureInstanceCreate, mp);
-    def.DrawUi = TextureInstanceDrawUi;
-    def.DrawImGui = TextureInstanceDrawImGui;
+    def.DrawUi = (GameInstanceEventFunction)TextureInstanceDrawUi;
+    def.DrawImGui = (GameInstanceEventFunction)TextureInstanceDrawImGui;
     MdEngineRegisterObject(def, OBJECT_TEXTURE_INSTANCE);
 
     def = GameObjectDefinitionCreate("Skybox", SkyboxCreate, mp);
-    def.Draw3d = SkyboxDraw3d;
+    def.Draw3d = (GameInstanceEventFunction)SkyboxDraw3d;
     MdEngineRegisterObject(def, OBJECT_SKYBOX);
 }
 
@@ -1792,7 +1793,7 @@ void VariableDynamicBufferSet(VariableDynamicBuffer* vdb, i32 index, i32 type, v
 }
 
 // TODO: Rename because the memory pool parameter causes confusion
-GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunctionSignature createFunc, MemoryPool* mp) {
+GameObjectDefinition GameObjectDefinitionCreate(const char* objectName, GameInstanceCreateFunction createFunc, MemoryPool* mp) {
     GameObjectDefinition def = {};
     def.Create = createFunc;
     def.objectName = CstringDuplicate(objectName, mp);
@@ -1855,7 +1856,7 @@ void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* va
 }
 // TODO: Change variable dynamic buffer initialization to happen here
 void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript) {
-    initScript(obj, &obj->data);
+    initScript(obj, obj->data);
     obj->UpdateScript = updateScript;
 }
 
@@ -2264,13 +2265,11 @@ void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind) {
         dseq->typewriter.autoHide = true;
     }
 }
-void DialogueSequenceUpdate(void* _dseq) {
-    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+void DialogueSequenceUpdate(DialogueSequence* dseq) {
     DialogueOptionsUpdate(&dseq->options);
     TypewriterUpdate(&dseq->typewriter);
 }
-void DialogueSequenceDrawUi(void* _dseq) {
-    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+void DialogueSequenceDrawUi(DialogueSequence* dseq) {
     DialogueOptionsDraw(&dseq->options);
     TypewriterDraw(&dseq->typewriter);
 }
@@ -2313,16 +2312,14 @@ DialogueSequenceSection* DialogueSequenceSectionCreate(i32 textCount, i32 option
     return dss;
 }
 
-void DialogueSequenceHandleTypewriter_TextAdvance(void* _dseq, EventArgs_TypewriterLineComplete* _args) {
-    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+void DialogueSequenceHandleTypewriter_TextAdvance(DialogueSequence* dseq, EventArgs_TypewriterLineComplete* _args) {
     EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
     DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, dseq->sectionIndex);
     if (args->lineCurrent == args->lineCount - 1 && dss->options->size > 0) {
         dseq->options.visible = true;
     }
 }
-void DialogueSequenceHandleOptions_Selected(void* _dseq, EventArgs_DialogueOptionsSelected* args) {
-    DialogueSequence* dseq = (DialogueSequence*)_dseq;
+void DialogueSequenceHandleOptions_Selected(DialogueSequence* dseq, EventArgs_DialogueOptionsSelected* args) {
     DialogueSequenceSection* dss = DialogueSequenceSectionGet(dseq, dseq->sectionIndex);
     i32 nextSectionIndex = TypeListGetI32(dss->link, args->index);
     if (nextSectionIndex == -1) {
@@ -2391,8 +2388,7 @@ void* InstanceRendererCreate(MemoryPool* mp) {
     ir->transforms = nullptr;
     return ir;
 }
-void InstanceRendererDraw3d(void* _is) {
-    InstanceRenderer* is = (InstanceRenderer*)_is;
+void InstanceRendererDraw3d(InstanceRenderer* is) {
     DrawMeshInstancedOptimized(is->mesh, *is->material, is->transforms, is->instanceCount);
 }
 
@@ -2402,12 +2398,10 @@ void* ModelInstanceCreate(MemoryPool* mp) {
     mi->transform = TransformCreate();
     return mi;
 }
-void ModelInstanceDraw3d(void* _mi) {
-    ModelInstance *mi = (ModelInstance*)_mi;
+void ModelInstanceDraw3d(ModelInstance* mi) {
     DrawModelTransform(mi->model, mi->transform.matrix, mi->tint);
 }
-void ModelInstanceDrawImGui(void* _mi) {
-    ModelInstance* mi = (ModelInstance*)_mi;
+void ModelInstanceDrawImGui(ModelInstance* mi) {
     TransformDrawImGui(&mi->transform);
 }
 
@@ -2424,21 +2418,18 @@ void* ParticleSystemCreate(MemoryPool* mp) {
     }
     return psys;
 }
-void ParticleSystemFree(void* _psys) {
-    ParticleSystem* psys = (ParticleSystem*)_psys;
+void ParticleSystemFree(ParticleSystem* psys) {
     UnloadMesh(psys->_quad);
     RL_FREE(psys->_transforms);
 }
-void ParticleSystemUpdate(void* _psys) {
-    ParticleSystem* psys = (ParticleSystem*)_psys;
+void ParticleSystemUpdate(ParticleSystem* psys) {
     v3 stepVelocity = psys->velocity * FRAME_TIME;
     mat4 transpose = MatrixTranslate(stepVelocity.x, stepVelocity.y, stepVelocity.z);
     for (i32 i = 0; i < psys->count; i++) {
         psys->_transforms[i] *= transpose;
     }
 }
-void ParticleSystemDraw3d(void* _psys) {
-    ParticleSystem* psys = (ParticleSystem*)_psys;
+void ParticleSystemDraw3d(ParticleSystem* psys) {
     DrawMeshInstanced(psys->_quad, *psys->_material, psys->_transforms, psys->count);
 }
 
@@ -2469,8 +2460,7 @@ void TextureInstanceSetPosition(TextureInstance* ti, v2 position) {
     ti->_drawDestination.y = position.y;
     ti->_position = position;
 }
-void TextureInstanceDrawUi(void* _ti) {
-    TextureInstance* ti = (TextureInstance*)_ti;
+void TextureInstanceDrawUi(TextureInstance* ti) {
     BeginShaderMode(*ti->shader);
     DrawTexturePro(*ti->_texture, ti->_drawSource, ti->_drawDestination, ti->origin, ti->_rotation, {255, 255, 255, 128});//ti->tint);
     EndShaderMode();
@@ -2496,16 +2486,14 @@ void SkyboxInit(Skybox* sb, Shader* shader, Image* image) {
         *image,
         CUBEMAP_LAYOUT_AUTO_DETECT);
 }
-void SkyboxDraw3d(void* _sb) {
-    Skybox* sb = (Skybox*)_sb;
+void SkyboxDraw3d(Skybox* sb) {
     rlDisableBackfaceCulling();
     rlDisableDepthMask();
         DrawModel(sb->model, {0.f}, 1.0f, WHITE);
     rlEnableBackfaceCulling();
     rlEnableDepthMask();
 }
-void SkyboxFree(void* _sb) {
-    Skybox* sb = (Skybox*)_sb;
+void SkyboxFree(Skybox* sb) {
     UnloadTexture(sb->_texture);
 }
 #endif // __MD_ENGINE_H
