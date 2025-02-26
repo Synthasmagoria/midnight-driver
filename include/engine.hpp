@@ -467,10 +467,10 @@ i32 PixelformatGetStride(i32 format) {
         case PIXELFORMAT_UNCOMPRESSED_R5G6B5:
         case PIXELFORMAT_UNCOMPRESSED_R5G5B5A1:
         case PIXELFORMAT_UNCOMPRESSED_R4G4B4A4:
-        case PIXELFORMAT_UNCOMPRESSED_R32:
         case PIXELFORMAT_UNCOMPRESSED_R32G32B32:
         case PIXELFORMAT_UNCOMPRESSED_R32G32B32A32:
         case PIXELFORMAT_UNCOMPRESSED_R16:
+        case PIXELFORMAT_UNCOMPRESSED_R32:
         case PIXELFORMAT_UNCOMPRESSED_R16G16B16:
         case PIXELFORMAT_UNCOMPRESSED_R16G16B16A16:
         case PIXELFORMAT_COMPRESSED_DXT1_RGB:
@@ -909,6 +909,7 @@ struct DialogueSequence {
     DialogueOptions options;
     TypeList* sections;
     i32 sectionIndex;
+    bool active;
 };
 void* DialogueSequenceCreate(MemoryPool* mp);
 void DialogueSequenceUpdate(DialogueSequence* dseq);
@@ -2398,12 +2399,16 @@ void DialogueSequenceSectionStart(DialogueSequence* dseq, i32 ind) {
     }
 }
 void DialogueSequenceUpdate(DialogueSequence* dseq) {
-    DialogueOptionsUpdate(&dseq->options);
-    TypewriterUpdate(&dseq->typewriter);
+    if (dseq->active) {
+        DialogueOptionsUpdate(&dseq->options);
+        TypewriterUpdate(&dseq->typewriter);
+    }
 }
 void DialogueSequenceDrawUi(DialogueSequence* dseq) {
-    DialogueOptionsDraw(&dseq->options);
-    TypewriterDraw(&dseq->typewriter);
+    if (dseq->active) {
+        DialogueOptionsDraw(&dseq->options);
+        TypewriterDraw(&dseq->typewriter);
+    }
 }
 // TODO: Move this out of the engine
 void DialogueSequenceSetLayout(DialogueSequence* dseq, i32 layout) {

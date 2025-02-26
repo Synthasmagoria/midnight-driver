@@ -67,7 +67,7 @@ struct CameraManager {
     float debugCameraSpeed;
     i32 cameraMode;
     struct_internal constexpr float debugCameraSpeedMin = 0.05f;
-    struct_internal constexpr float debugCameraSpeedMax = 5.f;
+    struct_internal constexpr float debugCameraSpeedMax = 20.f;
 };
 void* CameraManagerCreate(MemoryPool* mp);
 void CameraManagerUpdate(CameraManager* camMan);
@@ -85,7 +85,7 @@ Camera CameraGetDefault();
 
 */
 struct ForestGenerationInfo {
-    v2 position;
+    v3 position;
     v2 size;
     float density;
     float treeChance;
@@ -94,7 +94,7 @@ struct ForestGenerationInfo {
     float randomTiltDegrees;
     Heightmap* heightmap;
 };
-void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material material, MemoryPool* sceneMemory, MemoryPool* scratchMemory);
+void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material* material, MemoryPool* sceneMemory, MemoryPool* scratchMemory);
 
 // TODO: Make this reusable
 struct TextureInstance_PriestReachout {
@@ -490,6 +490,7 @@ namespace priest_reachout {
     }
 
     void TextureInstanceMoon_ScriptInit(GameObject* obj, TextureInstance* ti) {
+        ti->tint.a = 0;
         InstanceVariablePush("time", 0);
         InstanceVariablePush("fadeTweenValueStart", (byte)0);
         InstanceVariablePush("fadeTweenValueEnd", (byte)255);
@@ -500,7 +501,7 @@ namespace priest_reachout {
             _InstanceVariableGet("fadeTweenValueEnd", MD_TYPE_BYTE),
             MD_TYPE_BYTE,
             2.f);
-        TweenStart(&t);
+        //TweenStart(&t);
         InstanceVariablePush("fadeTween", t);
     }
     void TextureInstanceMoon_ScriptUpdate(GameObject* obj, TextureInstance* ti) {
@@ -532,9 +533,58 @@ namespace priest_reachout {
             MdGameObjectAdd(go, count, obj);
         }
         {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
+            ModelInstance* mi = (ModelInstance*)obj.data;
+            mi->model = resources::models[resources::MODEL_TREE];
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_CAB, mp);
             obj.active = false;
             Cab* data = (Cab*)obj.data;
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL0].meshes[0]);
+            v3 level1_position = bb.min;
+            v3 level1_size = bb.max - bb.min;
+
+            Heightmap* hm = MemoryReserve<Heightmap>(mp);
+            HeightmapGenerationInfo hgi = {};
+            hgi.image = &resources::images[resources::IMAGE_LEVEL0_HEIGHTMAP];
+            hgi.resdiv = 0;
+            hgi.size = {level1_size.x, level1_size.z};
+            hgi.position = level1_position;
+            HeightmapInit(hm, hgi);
+
+            ForestGenerationInfo fgi = {};
+            fgi.density = 0.25f;
+            fgi.heightmap = hm;
+            fgi.position = {level1_position.x, 0.f, level1_position.z};
+            fgi.size = {level1_size.x, level1_size.z};
+            fgi.randomTiltDegrees = 10.f;
+            fgi.randomYDip = 0.5f;
+            fgi.randomPositionOffset = 2.5f;
+            fgi.treeChance = 50.f;
+
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
+            InstanceRenderer* ir = (InstanceRenderer*)obj.data;
+            InstanceRendererCreate_InitForest(
+                ir,
+                resources::images[resources::IMAGE_LEVEL0_TERRAINMAP],
+                fgi,
+                resources::models[resources::MODEL_TREE].meshes[0],
+                &resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
+                mp,
+                &mdEngine::scratchMemory);
+            MdGameObjectAdd(go, count, obj);
+        }
+        {
+            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
+            ModelInstance* mi = (ModelInstance*)obj.data;
+            mi->model = resources::models[resources::MODEL_LEVEL0];
+            mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
+            mi->model.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_LEVEL0_HEIGHTMAP];
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -556,8 +606,8 @@ namespace priest_reachout {
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_DIALOGUE_SEQUENCE, mp);
             DialogueSequence* dseq = (DialogueSequence*)obj.data;
-            DialogueSequence_InitPriestHandover(dseq, mp);
-            DialogueSequenceSectionStart(dseq, 0);
+            //DialogueSequence_InitPriestHandover(dseq, mp);
+            //DialogueSequenceSectionStart(dseq, 0);
             MdGameObjectAdd(go, count, obj);
         }
         return;
@@ -635,50 +685,6 @@ namespace priest_reachout {
             ti->shader = &resources::shaders[resources::SHADER_PRIEST_REACHOUT_08];
             TextureInstanceSetTexture(ti, &resources::textures[resources::TEXTURE_PRIEST_REACHOUT_08_FOREGROUND]);
             TextureInstanceSetSize(ti, {(float)global::screenWidth, (float)global::screenHeight});
-            MdGameObjectAdd(go, count, obj);
-        }
-
-        return;
-        {
-            BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL0].meshes[0]);
-            v3 level1_position = bb.min;
-            v3 level1_size = bb.max - bb.min;
-
-            Heightmap* hm = MemoryReserve<Heightmap>(mp);
-            HeightmapGenerationInfo hgi = {};
-            hgi.image = &resources::images[resources::IMAGE_LEVEL0_HEIGHTMAP];
-            hgi.resdiv = 0;
-            hgi.size = level1_size;
-            hgi.position = level1_position;
-            HeightmapInit(hm, hgi);
-
-            ForestGenerationInfo fgi = {};
-            fgi.density = 0.01f;
-            fgi.heightmap = hm;
-            fgi.position = {level1_position.x, level1_position.z};
-            fgi.size = {level1_size.x, level1_size.z};
-            fgi.randomTiltDegrees = 10.f;
-            fgi.randomYDip = 2.f;
-            fgi.randomPositionOffset = 0.5f;
-            fgi.treeChance = 50.f;
-
-            GameObject obj = MdEngineInstanceGameObject(OBJECT_INSTANCE_RENDERER, mp);
-            InstanceRenderer* ir = (InstanceRenderer*)obj.data;
-            InstanceRendererCreate_InitForest(
-                ir,
-                resources::images[resources::IMAGE_LEVEL0_TERRAINMAP],
-                fgi,
-                resources::models[resources::MODEL_TREE].meshes[0],
-                resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
-                mp,
-                &mdEngine::scratchMemory);
-            MdGameObjectAdd(go, count, obj);
-        }
-        {
-            GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
-            ModelInstance* mi = (ModelInstance*)obj.data;
-            mi->model = resources::models[resources::MODEL_LEVEL0];
-            mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
             MdGameObjectAdd(go, count, obj);
         }
     }
@@ -954,9 +960,8 @@ i32 main() {
         if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, false, false)) {
             debug::cameraEnabled = !debug::cameraEnabled;
         } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, false, true, false)) {
-            // Nothing for now
-        } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, true, true, false)) {
             debug::overlayEnabled = !debug::overlayEnabled;
+        } else if (InputCheckPressedMod(INPUT_DEBUG_TOGGLE, true, true, false)) {
             debug::cursorEnabled = !debug::cursorEnabled;
         }
 
@@ -1117,8 +1122,11 @@ void LoadGameModels() {
     resources::models[resources::MODEL_DEFAULT_CYLINDER] = LoadModelFromMesh(GenMeshCylinder(1.f, 1.f, 16));
     resources::models[resources::MODEL_DEFAULT_PLANE] = LoadModelFromMesh(GenMeshPlane(1.f, 1.f, 1, 1));
     resources::models[resources::MODEL_DEFAULT_SPHERE] = LoadModelFromMesh(GenMeshSphere(1.f, 16, 16));
+    // resources::models[resources::MODEL_CAB] = LOAD_MODEL(resources::modelPaths[0]);
+    // resources::models[resources::MODEL_TREE] = LOAD_MODEL(resources::modelPaths[1]);
+    // resources::models[resources::MODEL_LEVEL0] = LOAD_MODEL(resources::modelPaths[2]);
     for (i32 i = 0; i < resources::MODEL_COUNT - resources::MODEL_DEFAULT_COUNT; i++) {
-        resources::models[i + resources::MODEL_DEFAULT_COUNT] = LOAD_MODEL(resources::modelPaths[i]);
+       resources::models[i + resources::MODEL_DEFAULT_COUNT] = LOAD_MODEL(resources::modelPaths[i]);
     }
 }
 void UnloadGameModels() {
@@ -1205,6 +1213,9 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
             UnloadGameShaders();
             LoadGameShaders();
         }
+        if (global::currentCamera != nullptr) {
+            ImGui::InputFloat3("Current camera position: ", (float*)&global::currentCamera->position);
+        }
     }
     if (ImGui::CollapsingHeader("Instancing", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Combo("Objects", &debug::instanceableObjectSelection, debug::instanceableObjectNames);
@@ -1222,7 +1233,7 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
     }
 }
 
-void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material material, MemoryPool* sceneMemory, MemoryPool* scratchMemory) {
+void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, ForestGenerationInfo info, Mesh mesh, Material* material, MemoryPool* sceneMemory, MemoryPool* scratchMemory) {
     const i32 stride = PixelformatGetStride(image.format);
     if (stride < 3) {
         TraceLog(LOG_WARNING, TextFormat("%s: Passed Image isn't valid for creating a forest", nameof(InstanceRendererCreate_InitForest)));
@@ -1233,8 +1244,6 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
     i32 treeCount = 0;
     mat4 *transforms = (mat4*)MemoryReserve<mat4>(scratchMemory, treesMax);
     v2 pixelIncrF = imageSize / info.size / info.density;
-    //const i32 incrx = pixelIncrF.x < 1.f ? 1 : (i32)floorf(pixelIncrF.x);
-    //const i32 incry = pixelIncrF.y < 1.f ? 1 : (i32)floorf(pixelIncrF.y);
     const byte* imageData = (byte*)image.data;
     for (float x = 0; x < info.size.x; x += 1.f / info.density) {
         for (float y = 0; y < info.size.y; y += 1.f / info.density) {
@@ -1262,41 +1271,26 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
 
             float localTreeChance = (float)colorFinal.g / 255.f * 100.f;
             if (GetRandomChanceF(localTreeChance * info.treeChance)) {
-                v2 treePos = v2{x, y};
+                v3 treePos = v3{x, 0.f, y} + info.position;
                 transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
                 transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
-                transforms[treeCount] *= MatrixTranslate(
+                v3 translate = {
                     treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
-                    GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
-                    treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
+                    treePos.y + GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
+                    treePos.z + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset)
+                };
+                transforms[treeCount] *= MatrixTranslate(translate.x, translate.y, translate.z);
                 treeCount++;
             }
         }
     }
-
-    //for (i32 x = 0; x < image.width; x += incrx) {
-    //    for (i32 y = 0; y < image.height; y += incry) {
-    //        i32 i = (x + y * image.width) * stride;
-    //        Color color = {imageData[i], imageData[i+1], imageData[i+2], 0};
-    //        if (color.g == 255 && GetRandomChanceF(info.treeChance)) {
-    //            v2 treePos = v2{(float)x, (float)y} / imageSize * info.size + info.position;
-    //            transforms[treeCount] = MatrixRotateYaw(GetRandomValueF(0.f, PI));
-    //            transforms[treeCount] *= MatrixRotatePitch(GetRandomValueF(0.f, info.randomTiltDegrees) * DEG2RAD);
-    //            transforms[treeCount] *= MatrixTranslate(
-    //                treePos.x + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset),
-    //                GetRandomValueF(-info.randomYDip, 0.f) + HeightmapSampleHeight(info.heightmap, treePos.x, treePos.y), // TODO: Sample a heightmap to get a proper vertical tree position
-    //                treePos.y + GetRandomValueF(-info.randomPositionOffset, info.randomPositionOffset));
-    //            treeCount++;
-    //        }
-    //    }
-    //}
 
     if (treeCount == 0) {
         TraceLog(LOG_WARNING, "%s: Didn't generate any trees", nameof(InstanceRendererCreate_InitForest));
         irOut->instanceCount = 0;
         irOut->transforms = nullptr;
         irOut->mesh = mesh;
-        irOut->material = &material;
+        irOut->material = material;
         return;
     }
 
@@ -1308,7 +1302,7 @@ void InstanceRendererCreate_InitForest(InstanceRenderer* irOut, Image image, For
     irOut->instanceCount = treeCount;
     irOut->transforms = transforms16;
     irOut->mesh = mesh;
-    irOut->material = &material;
+    irOut->material = material;
 
     MemoryPoolClear(scratchMemory);
 }
