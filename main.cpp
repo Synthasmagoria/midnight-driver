@@ -162,21 +162,18 @@ namespace resources {
         MODEL_DEFAULT_SPHERE,
         MODEL_DEFAULT_CYLINDER,
         MODEL_DEFAULT_CONE,
-        MODEL_DEFAULT_HEIGHTMAP,
         MODEL_DEFAULT_COUNT
     };
     enum GAME_MODELS {
         MODEL_CAB = MODEL_DEFAULT_COUNT,
         MODEL_TREE,
         MODEL_LEVEL0,
-        MODEL_LEVEL1,
         MODEL_COUNT
     };
     const char *modelPaths[MODEL_COUNT] = {
         "taxi.glb",
         "tree.glb",
         "level0.glb",
-        "level1_haircut.glb"
     };
     Model models[MODEL_DEFAULT_COUNT + MODEL_COUNT];
 
@@ -185,9 +182,8 @@ namespace resources {
         TEXTURE_GROUND,
         TEXTURE_NPATCH,
         TEXTURE_TREE_MODEL,
-        TEXTURE_TERRAINMAP_LEVEL0,
-        TEXTURE_HEIGHTMAP_LEVEL1,
-        TEXTURE_TERRAINMAP_LEVEL1,
+        TEXTURE_LEVEL0_HEIGHTMAP,
+        TEXTURE_LEVEL0_TERRAINMAP,
         TEXTURE_FBM_VALUE_OCT5_128,
         TEXTURE_PRIEST_REACHOUT_00_MOON,
         TEXTURE_PRIEST_REACHOUT_01_MIDDLE_GROUND,
@@ -205,9 +201,8 @@ namespace resources {
         "ground.png",
         "npatch.png",
         "tree_model.png",
-        "terrainmap_level0.png",
-        "heightmap_level1.png",
-        "terrainmap_level1.png",
+        "level0_heightmap.png",
+        "level0_terrainmap.png",
         "value_fbm_5oct_128.png",
         "priestReachout_00Moon.png",
         "priestReachout_01MiddleGround.png",
@@ -217,25 +212,20 @@ namespace resources {
         "priestReachout_05ArmMask.png",
         "priestReachout_06ArmDetail.png",
         "priestReachout_07Cross.png",
-        "priestReachout_08Foreground.png",
-
+        "priestReachout_08Foreground.png"
     };
     Texture2D textures[resources::TEXTURE_COUNT];
 
     enum GAME_IMAGES {
         IMAGE_SKYBOX,
-        IMAGE_HEIGHTMAP_LEVEL0,
-        IMAGE_TERRAINMAP_LEVEL0,
-        IMAGE_HEIGHTMAP_LEVEL1,
-        IMAGE_TERRAINMAP_LEVEL1,
+        IMAGE_LEVEL0_HEIGHTMAP,
+        IMAGE_LEVEL0_TERRAINMAP,
         IMAGE_COUNT
     };
     const char *imagePaths[IMAGE_COUNT] = {
         "skybox.png",
-        "heightmap_level0.png",
-        "terrainmap_level0.png",
-        "heightmap_level1.png",
-        "terrainmap_level1.png",
+        "level0_heightmap.png",
+        "level0_terrainmap.png",
     };
     Image images[IMAGE_COUNT];
 
@@ -650,13 +640,13 @@ namespace priest_reachout {
 
         return;
         {
-            BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL1].meshes[0]);
+            BoundingBox bb = GetMeshBoundingBox(resources::models[resources::MODEL_LEVEL0].meshes[0]);
             v3 level1_position = bb.min;
             v3 level1_size = bb.max - bb.min;
 
             Heightmap* hm = MemoryReserve<Heightmap>(mp);
             HeightmapGenerationInfo hgi = {};
-            hgi.image = &resources::images[resources::IMAGE_HEIGHTMAP_LEVEL1];
+            hgi.image = &resources::images[resources::IMAGE_LEVEL0_HEIGHTMAP];
             hgi.resdiv = 0;
             hgi.size = level1_size;
             hgi.position = level1_position;
@@ -676,7 +666,7 @@ namespace priest_reachout {
             InstanceRenderer* ir = (InstanceRenderer*)obj.data;
             InstanceRendererCreate_InitForest(
                 ir,
-                resources::images[resources::IMAGE_TERRAINMAP_LEVEL1],
+                resources::images[resources::IMAGE_LEVEL0_TERRAINMAP],
                 fgi,
                 resources::models[resources::MODEL_TREE].meshes[0],
                 resources::materials[resources::MATERIAL_LIT_INSTANCED_TREE],
@@ -687,14 +677,14 @@ namespace priest_reachout {
         {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp);
             ModelInstance* mi = (ModelInstance*)obj.data;
-            mi->model = resources::models[resources::MODEL_LEVEL1];
+            mi->model = resources::models[resources::MODEL_LEVEL0];
             mi->model.materials[0] = resources::materials[resources::MATERIAL_LIT_TERRAIN];
             MdGameObjectAdd(go, count, obj);
         }
     }
 }
 namespace model_viewer_scene {
-    void ModelInstanceObject_Create(GameObject* obj, ModelInstance* mi) {
+    void ModelInstanceObject_Init(GameObject* obj, ModelInstance* mi) {
         i32 shaderType = 0;
         InstanceVariablePush("shaderType", shaderType);
     }
@@ -719,7 +709,7 @@ namespace model_viewer_scene {
             GameObject obj = MdEngineInstanceGameObject(OBJECT_MODEL_INSTANCE, mp, "Model");
             ModelInstance *mi = (ModelInstance*)obj.data;
             mi->model = resources::models[resources::MODEL_TREE];
-            GameObjectAddScript(&obj, (GameObjectScriptFunc)ModelInstanceObject_Create, (GameObjectScriptFunc)ModelInstanceObject_Update);
+            GameObjectAddScript(&obj, (GameObjectScriptFunc)ModelInstanceObject_Init, (GameObjectScriptFunc)ModelInstanceObject_Update);
             MdGameObjectAdd(go, count, obj);
         }
         {
@@ -1079,7 +1069,7 @@ void LoadGameMaterials() {
     sh.locs[SHADER_LOC_COLOR_SPECULAR] = GetShaderLocation(sh, "texture1");
     mat = LoadMaterialDefault();
     mat.shader = sh;
-    mat.maps[SHADER_LOC_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_TERRAINMAP_LEVEL0];
+    mat.maps[SHADER_LOC_MAP_ALBEDO].texture = resources::textures[resources::TEXTURE_LEVEL0_TERRAINMAP];
     mat.maps[SHADER_LOC_MAP_SPECULAR].texture = resources::textures[resources::TEXTURE_GROUND];
     resources::materials[resources::MATERIAL_LIT_TERRAIN] = mat;
 }
@@ -1127,9 +1117,6 @@ void LoadGameModels() {
     resources::models[resources::MODEL_DEFAULT_CYLINDER] = LoadModelFromMesh(GenMeshCylinder(1.f, 1.f, 16));
     resources::models[resources::MODEL_DEFAULT_PLANE] = LoadModelFromMesh(GenMeshPlane(1.f, 1.f, 1, 1));
     resources::models[resources::MODEL_DEFAULT_SPHERE] = LoadModelFromMesh(GenMeshSphere(1.f, 16, 16));
-    // TODO: Temporary, please remove
-    resources::models[resources::MODEL_DEFAULT_HEIGHTMAP] = LoadModelFromMesh(GenMeshHeightmap(
-        resources::images[resources::IMAGE_HEIGHTMAP_LEVEL0], {100.f, 10.f, 100.f}));
     for (i32 i = 0; i < resources::MODEL_COUNT - resources::MODEL_DEFAULT_COUNT; i++) {
         resources::models[i + resources::MODEL_DEFAULT_COUNT] = LOAD_MODEL(resources::modelPaths[i]);
     }

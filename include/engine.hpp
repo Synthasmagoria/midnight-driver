@@ -1853,6 +1853,8 @@ void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameO
     mdEngine::currentGameObjectInstance = obj;
     initScript(obj, obj->data);
     mdEngine::currentGameObjectInstance = NULL;
+    // TODO: Freeze memory pool. We don't want to be able to create more variables during the scene
+    // TODO: Consider adding a create function that runs once all game objects have been added
     obj->UpdateScript = updateScript;
 }
 void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
@@ -2049,11 +2051,13 @@ void EventHandlerCallEvent(void* caller, i32 ind, void* _args) {
                 EventArgs_TypewriterLineComplete* args = (EventArgs_TypewriterLineComplete*)_args;
                 EventCallbackSignature_TypewriterLineComplete callback = (EventCallbackSignature_TypewriterLineComplete)TypeListGetPtr(callbacks, i);
                 callback(TypeListGetPtr(registrars, i), args);
+                break;
             }
             case EVENT_DIALOGUE_OPTIONS_SELECTED: {
                 EventArgs_DialogueOptionsSelected* args = (EventArgs_DialogueOptionsSelected*)_args;
                 EventCallbackSignature_DialogueOptionsSelected callback = (EventCallbackSignature_DialogueOptionsSelected)TypeListGetPtr(callbacks, i);
                 callback(TypeListGetPtr(registrars, i), args);
+                break;
             }
         }
     }
