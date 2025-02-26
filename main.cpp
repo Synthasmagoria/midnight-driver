@@ -1,7 +1,13 @@
+
 #include <cstring>
 #include <string.h>
 #define NO_FONT_AWESOME
 
+/*
+    TODO: Add Customized Raylib as a submodule to this project.
+    Currently LoadGLTF has been changed to fall back on non-indexed geometry for large meshes.
+    Additionally, the function DrawMeshInstancedOptimized should be in raylib itself. Not as code in my project.
+*/
 #include "raylib/raylib.h"
 #include "raylib/raymath.h"
 #include "raylib/rlgl.h"
@@ -375,12 +381,6 @@ void DrawDebug3d();
 void DrawDebugUi();
 void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount);
 
-void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
-void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
-void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
-void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
-void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
-
 // TODO: Make game code reloadable
 namespace scenes {
 namespace priest_reachout {
@@ -500,33 +500,28 @@ namespace priest_reachout {
     }
 
     void TextureInstanceMoon_ScriptInit(GameObject* obj, TextureInstance* ti) {
-        i32 timeValue = 0;
-        GameObjectVariablePush(obj, "time", MD_TYPE_I32, &timeValue);
-
-        i32 tweenFadeStartValue = 0;
-        GameObjectVariablePush(obj, "fadeTweenValueStart", MD_TYPE_BYTE, &tweenFadeStartValue);
-
-        i32 tweenFadeEndValue = 255;
-        GameObjectVariablePush(obj, "fadeTweenValueEnd", MD_TYPE_BYTE, &tweenFadeEndValue);
+        InstanceVariablePush("time", 0);
+        InstanceVariablePush("fadeTweenValueStart", (byte)0);
+        InstanceVariablePush("fadeTweenValueEnd", (byte)255);
 
         Tween t = TweenCreate(
             &(ti->tint.a),
-            GameObjectVariableGet(obj, "fadeTweenValueStart", MD_TYPE_BYTE),
-            GameObjectVariableGet(obj, "fadeTweenValueEnd", MD_TYPE_BYTE),
+            _InstanceVariableGet("fadeTweenValueStart", MD_TYPE_BYTE),
+            _InstanceVariableGet("fadeTweenValueEnd", MD_TYPE_BYTE),
             MD_TYPE_BYTE,
             2.f);
         TweenStart(&t);
-        GameObjectVariablePush(obj, "fadeTween", MD_TYPE_TWEEN, &t);
+        InstanceVariablePush("fadeTween", t);
     }
     void TextureInstanceMoon_ScriptUpdate(GameObject* obj, TextureInstance* ti) {
-        i32 time = *(i32*)GameObjectVariableGet(obj, "time", MD_TYPE_I32);
+        i32 time = InstanceVariableGet<i32>("time");
         time++;
         SetShaderValue(
             *ti->shader,
             GetShaderLocation(*ti->shader, "time"),
             &time,
             SHADER_UNIFORM_INT);
-        GameObjectVariableSet(obj, "time", MD_TYPE_I32, &time);
+        InstanceVariableSet("time", time);
         ShaderColor colorDiffuse = ColorToShaderColor(ti->tint);
         // TODO: Figure out why I have to pass color manually instead of tint just working
         SetShaderValue(
@@ -535,8 +530,9 @@ namespace priest_reachout {
             &colorDiffuse,
             SHADER_UNIFORM_VEC4);
 
-        Tween* t = (Tween*)GameObjectVariableGet(obj, "fadeTween", MD_TYPE_TWEEN);
-        TweenStep(t);
+        Tween t = InstanceVariableGet<Tween>("fadeTween");
+        TweenStep(&t);
+        InstanceVariableSet("fadeTween", t);
     }
     void Scene(GameObject* go, i32* count) {
         MemoryPool* mp = &mdEngine::sceneMemory;
@@ -700,10 +696,10 @@ namespace priest_reachout {
 namespace model_viewer_scene {
     void ModelInstanceObject_Create(GameObject* obj, ModelInstance* mi) {
         i32 shaderType = 0;
-        GameObjectVariablePush(obj, "shaderType", MD_TYPE_I32, &shaderType);
+        InstanceVariablePush("shaderType", shaderType);
     }
     void ModelInstanceObject_Update(GameObject* obj, ModelInstance* mi) {
-        i32 shaderType = *(i32*)GameObjectVariableGet(obj, "shaderType", MD_TYPE_I32);
+        i32 shaderType = InstanceVariableGet<i32>("shaderType");
         if (InputCheckPressedMod(INPUT_DEBUG_ACCEPT, false, true, false)) {
             shaderType = shaderType == 0 ? 1 : 0;
             if (shaderType == 0) {
@@ -711,7 +707,7 @@ namespace model_viewer_scene {
             } else {
                 mi->model.materials[0].shader = resources::shaders[resources::SHADER_LIT];
             }
-            GameObjectVariableSet(obj, "shaderType", MD_TYPE_I32, &shaderType);
+            InstanceVariableSet("shaderType", shaderType);
         }
     }
 
@@ -732,6 +728,7 @@ namespace model_viewer_scene {
         }
     }
 }
+// TODO: Remove these once custom raylib has been set up and added as a submodule
 Mesh DuplicateMesh(Mesh src) {
     Mesh m = {};
     m.vertexCount = src.vertexCount;
@@ -940,7 +937,7 @@ namespace mesh_index_removal {
 }
 
 i32 main() {
-    SetTraceLogLevel(2);
+    SetTraceLogLevel(4);
     InitWindow(global::screenWidth, global::screenHeight, "Midnight Driver");
     SetTargetFPS(FRAMERATE);
     rlImGuiSetup(true);
@@ -958,8 +955,8 @@ i32 main() {
     MdGameInit();
     MdDebugInit();
 
-    //scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
-    scenes::mesh_index_removal::Scene(global::gameObjects, &global::gameObjectCount);
+    scenes::priest_reachout::Scene(global::gameObjects, &global::gameObjectCount);
+    //scenes::mesh_index_removal::Scene(global::gameObjects, &global::gameObjectCount);
 
     while (!WindowShouldClose()) {
         InputUpdate(&mdEngine::input);
@@ -1235,47 +1232,6 @@ void DebugHandleImGui(GameObject* gameObjects, i32* gameObjectCount) {
         ImGui::DragFloat("Falloff distance", &global::lighting.falloffDistance, 0.1f);
         ImGui::DragFloat3("Ambient Color", &global::lighting.ambientColor.x, 0.05f, 0.f, 1.f);
         ImGui::DragFloat("Luminocity", &global::lighting.luminocity, 0.05f);
-    }
-}
-
-void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].active && gameObjects[i].Update != nullptr) {
-            gameObjects[i].Update(gameObjects[i].data);
-        }
-        if (gameObjects[i].active && gameObjects[i].UpdateScript != nullptr) {
-            gameObjects[i].UpdateScript(&gameObjects[i], gameObjects[i].data);
-        }
-    }
-}
-void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].visible && gameObjects[i].Draw3d != nullptr) {
-            gameObjects[i].Draw3d(gameObjects[i].data);
-        }
-    }
-}
-void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].visible && gameObjects[i].DrawUi != nullptr) {
-            gameObjects[i].DrawUi(gameObjects[i].data);
-        }
-    }
-}
-void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].Free != nullptr) {
-            gameObjects[i].Free(gameObjects[i].data);
-        }
-    }
-}
-void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
-    for (i32 i = 0; i < gameObjectCount; i++) {
-        if (gameObjects[i].DrawImGui != nullptr) {
-            if (ImGui::CollapsingHeader(TextFormat("%s - %s (%i)", gameObjects[i].objectName, gameObjects[i].instanceName, gameObjects[i].id))) {
-                gameObjects[i].DrawImGui(gameObjects[i].data);
-            }
-        }
     }
 }
 

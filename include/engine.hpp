@@ -736,10 +736,26 @@ struct GameObject {
 };
 i32 GameObject::idCounter = 100000;
 GameObject GameObjectCreate(void* data, MemoryPool* mp, const char* objectName, const char* instanceName = "<unnamed>");
-void GameObjectVariablePush(GameObject* obj, std::string name, i32 type, void* value);
-void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type);
-void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* value);
 void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript);
+void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount);
+void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount);
+void InstanceVariablePush(std::string name, i32 value);
+void InstanceVariablePush(std::string name, byte value);
+void InstanceVariablePush(std::string name, void* value);
+void InstanceVariablePush(std::string name, float value);
+void InstanceVariablePush(std::string name, Tween value);
+template <typename T> T InstanceVariableGet(std::string name);
+void InstanceVariableSet(std::string name, i32 value);
+void InstanceVariableSet(std::string name, byte value);
+void InstanceVariableSet(std::string name, void* value);
+void InstanceVariableSet(std::string name, float value);
+void InstanceVariableSet(std::string name, Tween value);
+void _InstanceVariablePush(std::string name, i32 type, void* value);
+void* _InstanceVariableGet(std::string name, i32 type);
+void _InstanceVariableSet(std::string name, i32 type, void* value);
 
 struct StringList {
     String* data;
@@ -1023,6 +1039,7 @@ namespace mdEngine {
     MemoryPool persistentMemory;
     MemoryPool engineMemory;
     EventHandler eventHandler;
+    GameObject* currentGameObjectInstance;
     Input input;
     Texture missingTexture;
     TextDrawingStyle textDrawingStyleDefault;
@@ -1831,7 +1848,105 @@ GameObject GameObjectCreate(void* data, MemoryPool* mp, const char* objectName, 
     GameObject::idCounter++;
     return go;
 }
-void GameObjectVariablePush(GameObject* obj, std::string name, i32 type, void* value) {
+// TODO: Change variable dynamic buffer initialization to happen here
+void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript) {
+    mdEngine::currentGameObjectInstance = obj;
+    initScript(obj, obj->data);
+    mdEngine::currentGameObjectInstance = NULL;
+    obj->UpdateScript = updateScript;
+}
+void GameObjectsUpdate(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].active && gameObjects[i].Update != nullptr) {
+            gameObjects[i].Update(gameObjects[i].data);
+        }
+        if (gameObjects[i].active && gameObjects[i].UpdateScript != nullptr) {
+            mdEngine::currentGameObjectInstance = &gameObjects[i];
+            gameObjects[i].UpdateScript(&gameObjects[i], gameObjects[i].data);
+        }
+    }
+    mdEngine::currentGameObjectInstance = NULL;
+}
+void GameObjectsDraw3d(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].visible && gameObjects[i].Draw3d != nullptr) {
+            gameObjects[i].Draw3d(gameObjects[i].data);
+        }
+    }
+}
+void GameObjectsDrawUi(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].visible && gameObjects[i].DrawUi != nullptr) {
+            gameObjects[i].DrawUi(gameObjects[i].data);
+        }
+    }
+}
+void GameObjectsFree(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].Free != nullptr) {
+            gameObjects[i].Free(gameObjects[i].data);
+        }
+    }
+}
+void GameObjectsDrawImGui(GameObject* gameObjects, i32 gameObjectCount) {
+    for (i32 i = 0; i < gameObjectCount; i++) {
+        if (gameObjects[i].DrawImGui != nullptr) {
+            if (ImGui::CollapsingHeader(TextFormat("%s - %s (%i)", gameObjects[i].objectName, gameObjects[i].instanceName, gameObjects[i].id))) {
+                gameObjects[i].DrawImGui(gameObjects[i].data);
+            }
+        }
+    }
+}
+void InstanceVariablePush(std::string name, i32 value) {
+    _InstanceVariablePush(name, MD_TYPE_I32, &value);
+}
+void InstanceVariablePush(std::string name, byte value) {
+    _InstanceVariablePush(name, MD_TYPE_BYTE, &value);
+}
+void InstanceVariablePush(std::string name, void* value) {
+    _InstanceVariablePush(name, MD_TYPE_PTR, &value);
+}
+void InstanceVariablePush(std::string name, float value) {
+    _InstanceVariablePush(name, MD_TYPE_FLOAT, &value);
+}
+void InstanceVariablePush(std::string name, Tween value) {
+    _InstanceVariablePush(name, MD_TYPE_TWEEN, &value);
+}
+template <> i32 InstanceVariableGet(std::string name) {
+    return *(i32*)_InstanceVariableGet(name, MD_TYPE_I32);
+}
+template <> byte InstanceVariableGet(std::string name) {
+    return *(byte*)_InstanceVariableGet(name, MD_TYPE_BYTE);
+}
+template <> void* InstanceVariableGet(std::string name) {
+    return _InstanceVariableGet(name, MD_TYPE_PTR);
+}
+template <> float InstanceVariableGet(std::string name) {
+    return *(float*)_InstanceVariableGet(name, MD_TYPE_FLOAT);
+}
+template <> Tween InstanceVariableGet(std::string name) {
+    return *(Tween*)_InstanceVariableGet(name, MD_TYPE_TWEEN);
+}
+// TODO: Create some sort of global state where calling this function sets the currently scoped game instance.
+// This is to get rid of a lot of the vars passed to this function. 'obj' and 'type' can be removed enirely.
+// 'value' can be replaced with an actual typed variable. Same thing should go for GameObjectVariableGet
+void InstanceVariableSet(std::string name, i32 value) {
+    _InstanceVariableSet(name, MD_TYPE_I32, &value);
+}
+void InstanceVariableSet(std::string name, byte value) {
+    _InstanceVariableSet(name, MD_TYPE_BYTE, &value);
+}
+void InstanceVariableSet(std::string name, void* value) {
+    _InstanceVariableSet(name, MD_TYPE_PTR, &value);
+}
+void InstanceVariableSet(std::string name, float value) {
+    _InstanceVariableSet(name, MD_TYPE_FLOAT, &value);
+}
+void InstanceVariableSet(std::string name, Tween value) {
+    _InstanceVariableSet(name, MD_TYPE_TWEEN, &value);
+}
+void _InstanceVariablePush(std::string name, i32 type, void* value) {
+    GameObject* obj = mdEngine::currentGameObjectInstance;
     if (obj->variableIndices.find(name) != obj->variableIndices.end()) {
         const char* log = TextFormat(
             "%s: Variable with name '%s' already exists in object '%s'",
@@ -1843,7 +1958,8 @@ void GameObjectVariablePush(GameObject* obj, std::string name, i32 type, void* v
     }
     obj->variableIndices[name] = VariableDynamicBufferPush(&obj->variableBuffer, value, type);
 }
-void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type) {
+void* _InstanceVariableGet(std::string name, i32 type) {
+    GameObject* obj = mdEngine::currentGameObjectInstance;
     if (obj->variableIndices.find(name) == obj->variableIndices.end()) {
         const char* log = TextFormat(
             "%s: Variable with name '%s' doesn't exists in object '%s'",
@@ -1858,10 +1974,8 @@ void* GameObjectVariableGet(GameObject* obj, std::string name, i32 type) {
         obj->variableIndices[name],
         type);
 }
-// TODO: Create some sort of global state where calling this function sets the currently scoped game instance.
-// This is to get rid of a lot of the vars passed to this function. 'obj' and 'type' can be removed enirely.
-// 'value' can be replaced with an actual typed variable. Same thing should go for GameObjectVariableGet
-void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* value) {
+void _InstanceVariableSet(std::string name, i32 type, void* value) {
+    GameObject* obj = mdEngine::currentGameObjectInstance;
     if (obj->variableIndices.find(name) == obj->variableIndices.end()) {
         const char* log = TextFormat(
             "%s: Variable with name '%s' doesn't exists in object '%s'",
@@ -1872,11 +1986,6 @@ void GameObjectVariableSet(GameObject* obj, std::string name, i32 type, void* va
         return;
     }
     VariableDynamicBufferSet(&obj->variableBuffer, obj->variableIndices[name], type, value);
-}
-// TODO: Change variable dynamic buffer initialization to happen here
-void GameObjectAddScript(GameObject* obj, GameObjectScriptFunc initScript, GameObjectScriptFunc updateScript) {
-    initScript(obj, obj->data);
-    obj->UpdateScript = updateScript;
 }
 
 void StringListInit(StringList* list, i32 size, MemoryPool* mp) {
